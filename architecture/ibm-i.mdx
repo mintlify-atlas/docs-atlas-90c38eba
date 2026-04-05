@@ -1,0 +1,104 @@
+---
+title: "IBM i Integration Architecture"
+description: "How the Datadog IBM i integration uses ODBC and a subprocess model to safely collect system metrics from IBM i hosts without hanging or leaking threads."
+---
+
+<Note>
+  This page is for developers who want to understand the internals of the IBM i integration.
+</Note>
+
+## Overview
+
+The IBM i integration uses [ODBC](https://en.wikipedia.org/wiki/Open_Database_Connectivity) to connect to IBM i hosts and query system performance data through an SQL interface. Specifically, it relies on the **ODBC Driver for IBM i Access Client Solutions** — a proprietary IBM ODBC driver that manages connections to IBM i hosts.
+
+Limitations in this driver make a straightforward check implementation unsafe. The architecture described below is specifically designed to avoid hanging processes and thread leaks.
+
+## IBM i ODBC driver limitations
+
+ODBC drivers can optionally support *connection attributes* to control connection behavior. One critical attribute is `SQL_ATTR_QUERY_TIMEOUT`, which sets the maximum time allowed for a query to complete. Without this attribute, a query waits indefinitely if a network issue occurs.
+
+The IBM i ODBC driver's handling of `SQL_ATTR_QUERY_TIMEOUT` does not work as expected:
+
+<Warning>
+  The IBM i DB2 ODBC driver estimates the expected running time of a query and preemptively aborts it if the estimate exceeds the timeout threshold. It does **not** measure actual elapsed time. This means network hangs are not caught by the timeout mechanism, and the driver can block indefinitely.
+</Warning>
+
+The practical consequence: you cannot rely on `SQL_ATTR_QUERY_TIMEOUT` to protect against stalled queries caused by network interruptions.
+
+## Agent architecture: the subprocess model
+
+To work around the driver limitation, the IBM i check runs queries in a **subprocess** that the main Agent process can forcibly kill and restart when a timeout elapses.
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  Datadog Agent Process                                   │
+│                                                          │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │  IBM i Check                                       │  │
+│  │                                                    │  │
+│  │  Spawns subprocess ──────────────────────────────┐ │  │
+│  │  Monitors timeout                                │ │  │
+│  │  Kills & restarts on timeout                     │ │  │
+│  └──────────────────────────────────────────────────│─┘  │
+│                                                     │    │
+│  ┌──────────────────────────────────────────────────▼─┐  │
+│  │  query_script.py subprocess                        │  │
+│  │  (embedded Python interpreter)                     │  │
+│  │                                                    │  │
+│  │  ODBC connection → IBM i host                      │  │
+│  │  Executes SQL queries via QueryManager             │  │
+│  │  Sends JSON results over stdout pipe               │  │
+│  │  Receives query requests over stdin pipe           │  │
+│  └────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────┘
+                          │ ODBC (TCP)
+              ┌───────────▼───────────┐
+              │  IBM i Host           │
+              │  (DB2 for i SQL API)  │
+              └───────────────────────┘
+```
+
+### Communication between processes
+
+The main Agent check and the `query_script.py` subprocess communicate using **JSON-encoded messages over pipes** (stdin and stdout). The protocol ends when the subprocess sends the special `ENDOFQUERY` message.
+
+<Warning>
+  Pipe I/O must be handled with care. Both the main process and the subprocess must avoid blocking indefinitely on pipe reads or writes, as this would reproduce the same hang problem the subprocess model is designed to solve.
+</Warning>
+
+### Persistent connection requirement
+
+The connection to the IBM i host **must be kept open across queries** within a single subprocess lifetime. This is not an optimization — it is a correctness requirement:
+
+For a given ODBC connection, the `ELAPSED_` columns on IBM i system views report statistics accumulated **since the last time the table was queried on that connection**. If you use separate connections for each query, these columns always return zero and you lose delta-based metrics.
+
+## Data collection
+
+### QueryManager
+
+The IBM i check uses the standard `QueryManager` class shared by all SQL-based Datadog checks, with one addition: **each query must include an explicit timeout value**. This is necessary because some IBM i queries take significantly longer to complete than queries on other platforms.
+
+### Queries and performance tables
+
+The integration queries IBM i system views through the SQL interface provided by the ODBC driver. These views expose performance data comparable to what you would see in IBM i performance tools, including metrics related to CPU, disk, memory, and job activity.
+
+<Tip>
+  Because `ELAPSED_` columns accumulate statistics relative to the last query on the same connection, maintaining a single persistent subprocess connection is what makes delta-based metrics possible. The subprocess is restarted only on timeout, not between normal check runs.
+</Tip>
+
+## Summary of design decisions
+
+<AccordionGroup>
+  <Accordion title="Why a subprocess?">
+    The IBM i ODBC driver does not reliably abort queries on actual timeouts — only on estimated ones. Running queries in a subprocess allows the Agent to kill the process unconditionally when a real timeout elapses, ensuring the Agent check never hangs.
+  </Accordion>
+  <Accordion title="Why keep the connection persistent across queries?">
+    IBM i system views use `ELAPSED_` columns that measure change since the last query on the same connection. A new connection resets these counters to zero, making delta metrics impossible. The persistent subprocess holds the connection open for the lifetime of the check.
+  </Accordion>
+  <Accordion title="Why use the embedded Python interpreter?">
+    The subprocess runs `query_script.py` using the embedded Python interpreter that ships with the Datadog Agent. This ensures the subprocess has access to the same Python environment and ODBC bindings as the main check without requiring a separate Python installation.
+  </Accordion>
+  <Accordion title="Why JSON over pipes?">
+    Pipes are the simplest inter-process communication mechanism available across platforms. JSON provides a structured, human-readable format for passing query results and commands between the main check and the subprocess without requiring shared memory or sockets.
+  </Accordion>
+</AccordionGroup>

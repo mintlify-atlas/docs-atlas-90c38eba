@@ -1,0 +1,134 @@
+---
+title: "Frequently Asked Questions"
+description: "Answers to common questions about developing, testing, and contributing to Datadog integrations in the integrations-core repository."
+---
+
+## General concepts
+
+<AccordionGroup>
+  <Accordion title="What is the difference between an integration and a check?">
+    A **Check** is any integration whose execution is triggered directly in code by the [Datadog Agent](https://docs.datadoghq.com/agent/). All Agent-based integrations written in Python or Go are considered Checks.
+
+    An **integration** is a broader term that includes Checks as well as integrations that run outside the Agent (for example, crawler-based integrations that poll an external API without an Agent).
+
+    In practice, most integrations in `integrations-core` are Checks — they are Python classes that the Agent schedules and executes on a defined interval.
+  </Accordion>
+
+  <Accordion title="Why is test coverage tracked for test code itself?">
+    Coverage is tracked for test files because a drop in test coverage for test code means a test function or part of a test function is not being called. This can indicate dead test code, incorrectly structured parameterized tests, or test utilities that are no longer exercised.
+
+    For a concrete example, [this test bug](https://github.com/DataDog/integrations-core/pull/7714/commits/79f674ce2deb1023d73699c0a704a83f7814875d) was caught because test coverage revealed that a branch inside a test function was never reached. Tracking test coverage on test code provides a second layer of quality assurance on top of the primary checks it is meant to verify.
+  </Accordion>
+
+  <Accordion title="Which language should I use for a new integration?">
+    The default language for Agent integrations is **Python**. Use Python unless you have a specific reason to use Go — for example, if your integration requires access to Agent internals that are only exposed to Go code.
+
+    JMX-based integrations use the Agent's built-in JMX fetcher, which requires a YAML configuration file and (optionally) a custom JAR for more complex metric collection logic.
+  </Accordion>
+
+  <Accordion title="Where does an Agent-based integration run?">
+    Agent-based integrations (Checks) run inside the Datadog Agent process on the machine where the Agent is installed. The Agent schedules each check at a configured interval, collects the returned metrics, events, and service checks, and forwards them to the Datadog backend.
+
+    Some integrations — like vSphere or SNMP — run on a separate host and connect remotely to the system being monitored. The Agent still runs locally; it is the integration's polling targets that are remote.
+  </Accordion>
+</AccordionGroup>
+
+## Development workflow
+
+<AccordionGroup>
+  <Accordion title="How do I run tests for an integration?">
+    Use `ddev` to run unit and integration tests:
+
+    ```bash
+    ddev --no-interactive test <INTEGRATION_NAME>
+    ```
+
+    For E2E tests, you first start a test environment, run the tests inside it, then stop it:
+
+    ```bash
+    ddev env show <INTEGRATION>          # List available environments
+    ddev env start --dev <INTEGRATION> <ENV>
+    ddev env test --dev <INTEGRATION> <ENV>
+    ddev env stop <INTEGRATION> <ENV>
+    ```
+
+    To run a specific test by name:
+
+    ```bash
+    ddev --no-interactive test <INTEGRATION> -- -k <TEST_NAME>
+    ```
+  </Accordion>
+
+  <Accordion title="How do I format and lint my code?">
+    Run the auto-formatter through `ddev`:
+
+    ```bash
+    ddev test -fs <INTEGRATION_NAME>
+    ```
+
+    This formats your code and runs the linter in a single step. Always do this before opening a pull request.
+  </Accordion>
+
+  <Accordion title="Do I need a changelog entry for my change?">
+    Changelog entries are required for all Python changes inside `datadog_checks` subdirectories. They are **not** required for changes to tests or assets.
+
+    If your change does not need a changelog entry (for example, a documentation-only fix), add the `changelog/no-changelog` label to your pull request to suppress the CI check.
+
+    See the [changelog reference](/reference/changelog) for how to create entries.
+  </Accordion>
+
+  <Accordion title="How do I modify configuration models?">
+    Do not edit files in `**/config_models/*.py` directly. These files are generated from `assets/configuration/spec.yaml`. To make changes:
+
+    <Steps>
+      <Step title="Edit the spec">
+        Modify `assets/configuration/spec.yaml` in the integration's directory.
+      </Step>
+      <Step title="Regenerate the models">
+        ```bash
+        ddev -x validate config -s <INTEGRATION_NAME>
+        ddev -x validate models -s <INTEGRATION_NAME>
+        ```
+      </Step>
+      <Step title="Commit both files">
+        Commit the updated `spec.yaml` and the regenerated config model files together.
+      </Step>
+    </Steps>
+  </Accordion>
+
+  <Accordion title="How do I recreate a test environment from scratch?">
+    Add `--recreate` to your test command:
+
+    ```bash
+    # Unit/integration tests — recreates the Hatch environment
+    ddev test --recreate <INTEGRATION>
+
+    # E2E tests — recreates Hatch environment and Docker containers/volumes
+    ddev env test --dev --recreate <INTEGRATION> <ENV>
+    ```
+
+    For E2E tests, `--recreate` runs `docker compose down --volumes` followed by `docker compose up -d --force-recreate`.
+  </Accordion>
+</AccordionGroup>
+
+## Integration design
+
+<AccordionGroup>
+  <Accordion title="What is the QueryManager and when should I use it?">
+    `QueryManager` is a shared base class for SQL-based integrations. It manages a list of queries, executes them against a database connection, and maps results to Datadog metrics. Use it when your integration collects data by running SQL queries — for example, integrations for PostgreSQL, MySQL, IBM i, or any ODBC-based data source.
+
+    Each query registered with `QueryManager` specifies the SQL statement, the columns to collect, and how to transform column values into metric names and tags.
+  </Accordion>
+
+  <Accordion title="How do multi-instance checks work?">
+    All Python checks support multi-instance configuration. Each entry under `instances:` in the check's YAML configuration creates a separate check instance. The Agent runs each instance independently on its own schedule.
+
+    This is how the vSphere integration supports separate `realtime` and `historical` collection instances, and how the SNMP check monitors multiple individual devices at different IP addresses.
+  </Accordion>
+
+  <Accordion title="What is the difference between Python auto-discovery and Agent auto-discovery for SNMP?">
+    **Python auto-discovery** is built into the SNMP Python check and uses a multithreaded implementation to scan a network CIDR range for devices. It is pending deprecation because it manages long-running threads outside the Agent's scheduling pipeline.
+
+    **Agent auto-discovery** (the SNMP listener) is implemented in Go as a proper Agent service listener. It discovers devices and feeds them into the Agent's existing check scheduling pipeline. Combined with the Datadog Cluster Agent, it scales to thousands of devices. You should use Agent auto-discovery for all new deployments.
+  </Accordion>
+</AccordionGroup>

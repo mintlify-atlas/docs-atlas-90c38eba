@@ -1,0 +1,124 @@
+---
+title: "HTTP"
+description: "The HTTP wrapper for making consistent, TLS-aware, proxy-aware HTTP requests from Datadog integrations."
+---
+
+Every `AgentCheck` instance provides `self.http`, a convenience wrapper around the popular [`requests`](https://requests.readthedocs.io/en/latest/) library. The wrapper enforces consistent behavior—TLS verification, proxy settings, authentication, and timeouts—across all integrations without requiring each check to implement its own configuration parsing.
+
+## Making requests
+
+The interface is identical to `requests`. Call `self.http.get`, `self.http.post`, and other HTTP methods with a URL:
+
+```python
+response = self.http.get(url)
+response.raise_for_status()
+data = response.json()
+```
+
+All methods accept the same optional keyword arguments as `requests`, such as `stream`, `timeout`, `headers`, and `json`:
+
+```python
+response = self.http.post(
+    url,
+    json={'key': 'value'},
+    headers={'X-Custom-Header': 'foo'},
+)
+```
+
+<Note>
+`self.http` is only available on Agent 6.13+. The configuration is parsed once at initialization time and cached, so there is no overhead on every call.
+</Note>
+
+## Configuration
+
+The wrapper automatically reads and applies configuration from the `instance` and `init_config` sections of the check's YAML configuration. You do not need to parse TLS, proxy, or authentication settings manually.
+
+Options set at the `init_config` level apply globally. Options set in `instances` take precedence over `init_config`. For complete documentation of every supported option, see the associated configuration templates for the `instances` and `init_config` sections.
+
+### Per-request overrides
+
+Any keyword argument you pass to a method-level call overrides the configured value for that request only:
+
+```python
+# tls_verify is False in instance config, but verify this specific request
+response = self.http.get(url, verify=True)
+```
+
+Use the `persist` keyword to override the `persist_connections` configuration option on a per-request basis:
+
+```python
+response = self.http.get(url, persist=True)
+```
+
+## Legacy configuration remapping
+
+Some older integrations use non-standard configuration key names. Use the `HTTP_CONFIG_REMAPPER` class attribute to map legacy keys to their canonical equivalents:
+
+```python
+class MyCheck(AgentCheck):
+    HTTP_CONFIG_REMAPPER = {
+        'disable_ssl_validation': {
+            'name': 'tls_verify',
+            'default': False,
+            'invert': True,
+        },
+        'ssl_cert_validation': {
+            'name': 'tls_verify',
+            'default': True,
+        },
+    }
+```
+
+Each entry maps a legacy config key to:
+
+<ParamField path="name" type="str" required>
+  The canonical configuration key the legacy key maps to.
+</ParamField>
+<ParamField path="default" type="any">
+  The default value to use if the legacy key is not present.
+</ParamField>
+<ParamField path="invert" type="bool" default="False">
+  When `True`, the boolean value from the legacy key is inverted before being used. Useful for keys like `disable_ssl_validation` where the semantic meaning is the opposite of `tls_verify`.
+</ParamField>
+
+## Unix socket support
+
+Requests to Unix domain sockets are supported via the `unix://` scheme. This uses [`requests-unixsocket`](https://pypi.org/project/requests-unixsocket/) under the hood.
+
+```python
+url = 'unix:///var/run/docker.sock/containers/json'
+response = self.http.get(url)
+```
+
+<Warning>
+Unix socket support is not available on Windows until Python adds support for `AF_UNIX`.
+</Warning>
+
+## Example: full check using HTTP
+
+```python
+from datadog_checks.base import AgentCheck
+
+
+class MyServiceCheck(AgentCheck):
+    __NAMESPACE__ = 'myservice'
+
+    HTTP_CONFIG_REMAPPER = {
+        'disable_ssl': {
+            'name': 'tls_verify',
+            'default': False,
+            'invert': True,
+        }
+    }
+
+    def check(self, instance):
+        url = instance.get('endpoint')
+
+        try:
+            response = self.http.get(url)
+            response.raise_for_status()
+            self.gauge('response.time_ms', response.elapsed.total_seconds() * 1000)
+            self.service_check('can_connect', AgentCheck.OK)
+        except Exception as e:
+            self.service_check('can_connect', AgentCheck.CRITICAL, message=str(e))
+```

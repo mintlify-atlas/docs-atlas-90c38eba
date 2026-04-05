@@ -1,0 +1,146 @@
+---
+title: "Persistent Cache"
+description: "A persistent key/value store for maintaining state across check runs and Agent restarts."
+---
+
+The base class provides a persistent key/value store you can use to preserve state between check runs and across Agent restarts. This is particularly useful for integrations that track cursors, timestamps, or offsets to avoid duplicating or losing data.
+
+## Reading and writing
+
+Use `read_persistent_cache` and `write_persistent_cache` to interact with the store. Both methods operate on string keys and string values.
+
+```python
+from datadog_checks.base import AgentCheck
+
+
+class MyCheck(AgentCheck):
+    def check(self, instance):
+        last_timestamp = self.read_persistent_cache('last_timestamp')
+
+        # Fetch only new data since the last run
+        new_data = fetch_data_since(last_timestamp)
+
+        for item in new_data:
+            self.gauge('mycheck.item_count', item['count'])
+
+        self.write_persistent_cache('last_timestamp', str(get_current_timestamp()))
+```
+
+### `read_persistent_cache(key)`
+
+Returns the string value previously stored under `key`, or an empty string if the key does not exist.
+
+<ParamField path="key" type="str" required>
+  The key to look up. Scoped automatically to this check instance.
+</ParamField>
+
+### `write_persistent_cache(key, value)`
+
+Stores `value` under `key`. The value must be a string.
+
+<ParamField path="key" type="str" required>
+  The key to store the value under.
+</ParamField>
+<ParamField path="value" type="str" required>
+  The string value to persist. Serialize non-string types (for example, use `str()`, `json.dumps()`, or similar) before storing.
+</ParamField>
+
+<Note>
+The cache is stored in a location where the Agent has guaranteed read and write access:
+- **Windows**: `%ProgramData%\Datadog\run`
+- **Linux/macOS**: `/opt/datadog-agent/run`
+</Note>
+
+## Cache invalidation
+
+By default, the cache key includes a digest of the complete instance configuration. This means any change to the instance's YAML—including unrelated settings like `timeout` or `tags`—invalidates the cache.
+
+This safe default prevents state from leaking between different check configurations, but it can be disruptive for integrations that need a stable cursor across configuration changes.
+
+## Customizing cache invalidation
+
+Override `persistent_cache_id()` to control when the cache is invalidated. Return a string that uniquely identifies the check instance for caching purposes. As long as this string remains the same, the cache is preserved even if other configuration options change.
+
+```python
+class MyCustomCheck(AgentCheck):
+    def persistent_cache_id(self):
+        endpoint = self.instance.get('endpoint', 'default_endpoint')
+        port = self.instance.get('port', 8080)
+        return f'{endpoint}:{port}'
+
+    def check(self, instance):
+        last_cursor = self.read_persistent_cache('cursor')
+
+        # ... collect data using the cursor ...
+        new_cursor = fetch_next_cursor(last_cursor)
+
+        self.write_persistent_cache('cursor', new_cursor)
+```
+
+In this example, changing `timeout` or `tags` in the instance config does not invalidate the cache because those fields are not part of the returned ID. Only a change to `endpoint` or `port` will reset the cursor.
+
+<Note>
+The value returned by `persistent_cache_id()` is cached internally after the first call. Complex calculations inside this method do not incur repeated overhead.
+</Note>
+
+## Using the config_set helper
+
+The `config_set_persistent_cache_id` helper function generates a stable cache ID from a specified subset of configuration options, without requiring you to write the extraction logic manually.
+
+```python
+from datadog_checks.base.checks import AgentCheck
+from datadog_checks.base.utils.persistent_cache import config_set_persistent_cache_id
+
+
+class MyCustomCheck(AgentCheck):
+    def persistent_cache_id(self):
+        return config_set_persistent_cache_id(
+            self,
+            instance_config_options=['endpoint', 'port'],
+        )
+
+    def check(self, instance):
+        last_cursor = self.read_persistent_cache('cursor')
+
+        # ... collect data using the cursor ...
+        new_cursor = fetch_next_cursor(last_cursor)
+
+        self.write_persistent_cache('cursor', new_cursor)
+```
+
+<ParamField path="check" type="AgentCheck" required>
+  The check instance to read configuration from.
+</ParamField>
+<ParamField path="init_config_options" type="list[str]">
+  Keys from `init_config` to include in the cache ID.
+</ParamField>
+<ParamField path="instance_config_options" type="list[str]">
+  Keys from `instance` to include in the cache ID.
+</ParamField>
+
+## Log cursors
+
+When using `send_log`, the base check automatically manages a persistent cursor for you. The cursor is stored and retrieved with `write_persistent_cache` and `read_persistent_cache` internally.
+
+Use `get_log_cursor` to retrieve the most recently persisted cursor:
+
+```python
+class MyLogCheck(AgentCheck):
+    def check(self, instance):
+        cursor = self.get_log_cursor()  # Returns dict or None
+
+        logs, next_cursor = fetch_logs_since(cursor)
+
+        for log in logs:
+            self.send_log({'message': log['text']}, cursor=next_cursor)
+```
+
+The `stream` parameter on `send_log` and `get_log_cursor` lets you maintain separate cursors for multiple log sources within the same check:
+
+```python
+self.send_log(data, cursor=cursor, stream='access_logs')
+self.send_log(data, cursor=cursor, stream='error_logs')
+
+access_cursor = self.get_log_cursor(stream='access_logs')
+error_cursor = self.get_log_cursor(stream='error_logs')
+```

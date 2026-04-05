@@ -1,0 +1,516 @@
+---
+title: "API Reference"
+description: "Complete reference for all public AgentCheck methods, organized by category."
+---
+
+This page documents every public method on `AgentCheck`. Import the base class with:
+
+```python
+from datadog_checks.base import AgentCheck
+```
+
+---
+
+## Metric submissions
+
+### `gauge`
+
+```python
+self.gauge(name, value, tags=None, hostname=None, device_name=None, raw=False)
+```
+
+Samples a gauge metric. A gauge represents a snapshot of a value at a point in time.
+
+<ParamField path="name" type="str" required>
+  The metric name. Prefixed with `__NAMESPACE__` unless `raw=True`.
+</ParamField>
+<ParamField path="value" type="float" required>
+  The value to record.
+</ParamField>
+<ParamField path="tags" type="list[str]">
+  Tags in `key:value` format.
+</ParamField>
+<ParamField path="hostname" type="str">
+  The host to associate with this metric. Defaults to the current host.
+</ParamField>
+<ParamField path="device_name" type="str">
+  Deprecated. Use a `device:<name>` tag instead.
+</ParamField>
+<ParamField path="raw" type="bool" default="False">
+  When `True`, bypasses the `__NAMESPACE__` prefix.
+</ParamField>
+
+---
+
+### `count`
+
+```python
+self.count(name, value, tags=None, hostname=None, device_name=None, raw=False)
+```
+
+Samples a raw count metric representing the total number of event occurrences in one interval. Unlike `monotonic_count`, the value can increase or decrease.
+
+<ParamField path="name" type="str" required>
+  The metric name.
+</ParamField>
+<ParamField path="value" type="float" required>
+  The total count for this interval.
+</ParamField>
+<ParamField path="tags" type="list[str]">
+  Tags in `key:value` format.
+</ParamField>
+<ParamField path="hostname" type="str">
+  The host to associate with this metric. Defaults to the current host.
+</ParamField>
+<ParamField path="device_name" type="str">
+  Deprecated. Use a `device:<name>` tag instead.
+</ParamField>
+<ParamField path="raw" type="bool" default="False">
+  When `True`, bypasses the `__NAMESPACE__` prefix.
+</ParamField>
+
+---
+
+### `monotonic_count`
+
+```python
+self.monotonic_count(
+    name, value, tags=None, hostname=None,
+    device_name=None, raw=False, flush_first_value=False
+)
+```
+
+Samples an increasing counter metric. The value must only increment. The Agent computes the delta between submissions.
+
+<ParamField path="name" type="str" required>
+  The metric name.
+</ParamField>
+<ParamField path="value" type="float" required>
+  The current cumulative value. Must only increase.
+</ParamField>
+<ParamField path="tags" type="list[str]">
+  Tags in `key:value` format.
+</ParamField>
+<ParamField path="hostname" type="str">
+  The host to associate with this metric. Defaults to the current host.
+</ParamField>
+<ParamField path="device_name" type="str">
+  Deprecated. Use a `device:<name>` tag instead.
+</ParamField>
+<ParamField path="raw" type="bool" default="False">
+  When `True`, bypasses the `__NAMESPACE__` prefix.
+</ParamField>
+<ParamField path="flush_first_value" type="bool" default="False">
+  When `True`, sends the first sampled value to the Agent. By default, the first submission only establishes the baseline.
+</ParamField>
+
+---
+
+### `rate`
+
+```python
+self.rate(name, value, tags=None, hostname=None, device_name=None, raw=False)
+```
+
+Samples a point value; the Agent calculates the per-second rate at the end of the check interval.
+
+<ParamField path="name" type="str" required>
+  The metric name.
+</ParamField>
+<ParamField path="value" type="float" required>
+  The raw count value. Divided by the interval to produce a rate.
+</ParamField>
+<ParamField path="tags" type="list[str]">
+  Tags in `key:value` format.
+</ParamField>
+<ParamField path="hostname" type="str">
+  The host to associate with this metric. Defaults to the current host.
+</ParamField>
+<ParamField path="device_name" type="str">
+  Deprecated. Use a `device:<name>` tag instead.
+</ParamField>
+<ParamField path="raw" type="bool" default="False">
+  When `True`, bypasses the `__NAMESPACE__` prefix.
+</ParamField>
+
+---
+
+### `histogram`
+
+```python
+self.histogram(name, value, tags=None, hostname=None, device_name=None, raw=False)
+```
+
+Samples a histogram metric. The Agent aggregates values within the interval and emits `.avg`, `.count`, `.median`, `.95percentile`, and `.max`.
+
+<ParamField path="name" type="str" required>
+  The metric name base. Suffixes are appended automatically.
+</ParamField>
+<ParamField path="value" type="float" required>
+  A single observation to include in the distribution.
+</ParamField>
+<ParamField path="tags" type="list[str]">
+  Tags in `key:value` format.
+</ParamField>
+<ParamField path="hostname" type="str">
+  The host to associate with this metric. Defaults to the current host.
+</ParamField>
+<ParamField path="device_name" type="str">
+  Deprecated. Use a `device:<name>` tag instead.
+</ParamField>
+<ParamField path="raw" type="bool" default="False">
+  When `True`, bypasses the `__NAMESPACE__` prefix.
+</ParamField>
+
+---
+
+### `historate`
+
+```python
+self.historate(name, value, tags=None, hostname=None, device_name=None, raw=False)
+```
+
+Samples a histogram based on rate metrics. Similar to `histogram`, but the distribution is computed over rate values rather than raw values.
+
+<ParamField path="name" type="str" required>
+  The metric name base.
+</ParamField>
+<ParamField path="value" type="float" required>
+  A single observation to include in the rate-based distribution.
+</ParamField>
+<ParamField path="tags" type="list[str]">
+  Tags in `key:value` format.
+</ParamField>
+<ParamField path="hostname" type="str">
+  The host to associate with this metric. Defaults to the current host.
+</ParamField>
+<ParamField path="device_name" type="str">
+  Deprecated. Use a `device:<name>` tag instead.
+</ParamField>
+<ParamField path="raw" type="bool" default="False">
+  When `True`, bypasses the `__NAMESPACE__` prefix.
+</ParamField>
+
+---
+
+## Service checks and events
+
+### `service_check`
+
+```python
+self.service_check(name, status, tags=None, hostname=None, message=None, raw=False)
+```
+
+Reports the uptime status of a service.
+
+<ParamField path="name" type="str" required>
+  The service check name.
+</ParamField>
+<ParamField path="status" type="int" required>
+  One of `AgentCheck.OK` (0), `AgentCheck.WARNING` (1), `AgentCheck.CRITICAL` (2), or `AgentCheck.UNKNOWN` (3).
+</ParamField>
+<ParamField path="tags" type="list[str]">
+  Tags to associate with this service check.
+</ParamField>
+<ParamField path="hostname" type="str">
+  The host to associate with this service check. Defaults to the current host.
+</ParamField>
+<ParamField path="message" type="str">
+  A description of why this status occurred.
+</ParamField>
+<ParamField path="raw" type="bool" default="False">
+  When `True`, bypasses the `__NAMESPACE__` prefix.
+</ParamField>
+
+The status constants are:
+
+| Constant | Value |
+|---|---|
+| `AgentCheck.OK` | `0` |
+| `AgentCheck.WARNING` | `1` |
+| `AgentCheck.CRITICAL` | `2` |
+| `AgentCheck.UNKNOWN` | `3` |
+
+---
+
+### `event`
+
+```python
+self.event(event_dict)
+```
+
+Sends an event to the Datadog Events stream.
+
+<ParamField path="event_dict" type="dict" required>
+  A dictionary describing the event. Required keys: `timestamp`, `event_type`, `msg_title`, `msg_text`.
+</ParamField>
+
+Full event dict schema:
+
+```python
+{
+    "timestamp": int,         # Unix epoch timestamp
+    "event_type": str,        # The event name
+    "api_key": str,           # Datadog API key
+    "msg_title": str,         # Event title
+    "msg_text": str,          # Event body
+    "aggregation_key": str,   # Key to aggregate related events
+    "alert_type": str,        # 'error', 'warning', 'success', or 'info' (default: 'info')
+    "source_type_name": str,  # Source type name
+    "host": str,              # Host name
+    "tags": list,             # List of tags
+    "priority": str,          # 'normal' or 'low' (default: 'normal')
+}
+```
+
+---
+
+## Metadata
+
+### `set_metadata`
+
+```python
+self.set_metadata(name, value, **options)
+```
+
+Updates cached metadata for the check, which the Agent sends at regular intervals (for example, software version).
+
+<ParamField path="name" type="str" required>
+  The metadata field name. If `METADATA_TRANSFORMERS` defines a transformer for this name, the transformer is invoked with `value` and `options`.
+</ParamField>
+<ParamField path="value" type="Any" required>
+  The raw metadata value. Must be a string if no transformer is defined.
+</ParamField>
+<ParamField path="**options" type="Any">
+  Keyword arguments forwarded to the metadata transformer, if one is defined.
+</ParamField>
+
+---
+
+### `metadata_entrypoint`
+
+A class method decorator that skips the decorated method if metadata collection is disabled on the Agent.
+
+```python
+class MyCheck(AgentCheck):
+    @AgentCheck.metadata_entrypoint
+    def collect_metadata(self):
+        version = get_service_version()
+        self.set_metadata('version', version)
+```
+
+---
+
+## Logging
+
+### `warning`
+
+```python
+self.warning(warning_message, *args, **kwargs)
+```
+
+Logs a warning message at most once per check instance for a given call site. The message appears in the Agent's status page and in-app.
+
+<ParamField path="warning_message" type="str" required>
+  The warning message. Supports `%`-style format strings when `args` are provided.
+</ParamField>
+<ParamField path="*args" type="Any">
+  Format arguments interpolated into `warning_message`.
+</ParamField>
+
+```python
+self.warning('Connection failed for host %s after %d retries', host, retries)
+```
+
+---
+
+### `self.log`
+
+A standard Python logger adapter, accessible as `self.log`. Supports all standard log levels:
+
+```python
+self.log.debug('Fetching metrics from %s', url)
+self.log.info('Check completed successfully')
+self.log.warning('Rate limit approaching: %d requests remaining', remaining)
+self.log.error('Failed to connect: %s', str(e))
+self.log.critical('Unrecoverable error, check will not run')
+```
+
+---
+
+## HTTP and cache
+
+### `self.http`
+
+A `RequestsWrapper` instance with the same interface as the `requests` library. Parses TLS, proxy, and authentication configuration automatically.
+
+```python
+response = self.http.get(url)
+response = self.http.post(url, json=payload)
+```
+
+See the [HTTP page](/base/http) for full documentation.
+
+---
+
+### `get_tls_context`
+
+```python
+self.get_tls_context(refresh=False, overrides=None)
+```
+
+Creates and caches an `ssl.SSLContext` from instance configuration. Available on Agent 7.24+.
+
+<ParamField path="refresh" type="bool" default="False">
+  Force re-creation of the context even if one is cached.
+</ParamField>
+<ParamField path="overrides" type="dict">
+  Configuration key overrides, applied on top of instance config.
+</ParamField>
+
+See the [TLS page](/base/tls) for full documentation.
+
+---
+
+### `read_persistent_cache`
+
+```python
+self.read_persistent_cache(key)
+```
+
+Returns the string value stored under `key`, or an empty string if the key does not exist.
+
+<ParamField path="key" type="str" required>
+  The cache key to retrieve.
+</ParamField>
+
+---
+
+### `write_persistent_cache`
+
+```python
+self.write_persistent_cache(key, value)
+```
+
+Stores a string `value` under `key` in the persistent cache.
+
+<ParamField path="key" type="str" required>
+  The cache key to write.
+</ParamField>
+<ParamField path="value" type="str" required>
+  The value to store. Must be a string.
+</ParamField>
+
+---
+
+### `persistent_cache_id`
+
+```python
+self.persistent_cache_id()
+```
+
+Returns the ID used to scope this check's persistent cache entries. Override this method to control cache invalidation behavior.
+
+See the [Persistent Cache page](/base/persistent-cache) for full documentation.
+
+---
+
+### `send_log`
+
+```python
+self.send_log(data, cursor=None, stream='default')
+```
+
+Submits a log entry.
+
+<ParamField path="data" type="dict[str, str]" required>
+  The log data. The `timestamp` key (if present) should be a Unix epoch float in seconds. The `ddtags` key (if absent) is automatically set from the instance's `tags` option.
+</ParamField>
+<ParamField path="cursor" type="dict[str, Any] | None">
+  Metadata to persist to disk after this log is submitted. Retrieve the most recent cursor with `get_log_cursor`.
+</ParamField>
+<ParamField path="stream" type="str" default="default">
+  The log stream name, used to maintain separate cursors for multiple sources in the same check.
+</ParamField>
+
+---
+
+### `get_log_cursor`
+
+```python
+self.get_log_cursor(stream='default')
+```
+
+Returns the most recent cursor dict saved by `send_log`, or `None` if no cursor has been written.
+
+<ParamField path="stream" type="str" default="default">
+  The log stream to retrieve the cursor for.
+</ParamField>
+
+---
+
+## Testing stubs
+
+### `AggregatorStub`
+
+The `AggregatorStub` replaces the real aggregator in unit tests. Import it and the `aggregator` fixture from `datadog_checks.dev`:
+
+```python
+from datadog_checks.dev.testing import BaseTestCase
+
+
+class TestMyCheck(BaseTestCase):
+    def test_metrics(self):
+        check = MyCheck('mycheck', {}, [{'host': 'localhost'}])
+        check.check({})
+
+        self.aggregator.assert_metric('mycheck.requests', value=42)
+        self.aggregator.assert_metric_has_tag('mycheck.requests', 'env:prod')
+        self.aggregator.assert_all_metrics_covered()
+```
+
+Key assertion methods:
+
+<ResponseField name="assert_metric(name, value=None, tags=None, count=None, at_least=1, hostname=None, metric_type=None)">
+  Asserts that a metric was submitted with the given attributes.
+</ResponseField>
+<ResponseField name="assert_metric_has_tag(name, tag, count=None, at_least=1)">
+  Asserts that a metric was submitted with a specific tag.
+</ResponseField>
+<ResponseField name="assert_metric_has_tag_prefix(name, tag_prefix, count=None, at_least=1)">
+  Asserts that a metric was submitted with a tag matching the given prefix.
+</ResponseField>
+<ResponseField name="assert_service_check(name, status=None, tags=None, count=None, at_least=1, hostname=None, message=None)">
+  Asserts that a service check was submitted.
+</ResponseField>
+<ResponseField name="assert_event(msg_text, count=None, at_least=1, exact_match=True, tags=None)">
+  Asserts that an event was submitted.
+</ResponseField>
+<ResponseField name="assert_all_metrics_covered()">
+  Asserts that every submitted metric was asserted at least once. Fails if there are unchecked metrics.
+</ResponseField>
+<ResponseField name="assert_no_duplicate_metrics()">
+  Asserts that no metric was submitted more than once with the same name and tags.
+</ResponseField>
+<ResponseField name="assert_metrics_using_metadata(metadata_metrics, check_submission_type=False)">
+  Asserts that all submitted metrics match the metadata in `metadata.csv`.
+</ResponseField>
+<ResponseField name="reset()">
+  Clears all recorded submissions. Call between test cases.
+</ResponseField>
+
+---
+
+### `DatadogAgentStub`
+
+The `DatadogAgentStub` replaces the real Agent bindings in unit tests.
+
+<ResponseField name="assert_metadata(check_id, data)">
+  Asserts that metadata was submitted for the given check ID.
+</ResponseField>
+<ResponseField name="assert_metadata_count(count)">
+  Asserts the total number of metadata submissions.
+</ResponseField>
+<ResponseField name="reset()">
+  Clears all recorded metadata submissions.
+</ResponseField>

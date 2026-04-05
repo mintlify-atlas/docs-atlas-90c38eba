@@ -1,0 +1,242 @@
+---
+title: "Databases"
+description: "The query framework for collecting metrics from any database using Query and QueryManager."
+---
+
+The base package provides a standard, database-agnostic framework for collecting metrics from arbitrary SQL queries. It handles query execution, column transformation, tag extraction, and metric submission without coupling your integration to a specific database library.
+
+The core premise is that you define a function that accepts a query string and returns a sequence of equal-length result rows. The framework maps each column of each row to a metric, tag, or computed value.
+
+## Core classes
+
+All functionality is exposed through two classes: `Query` and `QueryManager`.
+
+### `Query`
+
+`Query` wraps a single query definition in dict format. The dict format is based on the `custom_queries` format used across all Datadog database integrations.
+
+```python
+from datadog_checks.base.utils.db import Query
+
+my_query = Query({
+    'name': 'active_connections',
+    'query': 'SELECT state, count(*) FROM pg_stat_activity GROUP BY state',
+    'columns': [
+        {'name': 'state', 'type': 'tag'},
+        {'name': 'postgresql.connections', 'type': 'gauge'},
+    ],
+    'tags': ['custom_tag:value'],
+})
+```
+
+The query dict accepts these fields:
+
+<ParamField path="name" type="str" required>
+  A unique name for the query. Used in log messages and error output.
+</ParamField>
+<ParamField path="query" type="str" required>
+  The SQL query string to execute.
+</ParamField>
+<ParamField path="columns" type="list[dict]" required>
+  A list of column definitions, one per column in the query result. Each dict has a `name` and a `type`.
+</ParamField>
+<ParamField path="tags" type="list[str]">
+  Static tags to add to all metrics from this query.
+</ParamField>
+<ParamField path="extras" type="list[dict]">
+  Additional computed metrics derived from column values.
+</ParamField>
+<ParamField path="collection_interval" type="int">
+  How often (in seconds) to run this query. If not set, the query runs on every check run. If the collection interval is longer than the check interval, the query runs at the next check run after the interval has elapsed.
+</ParamField>
+<ParamField path="metric_prefix" type="str">
+  A custom prefix for all metric names from this query. Overrides the default integration namespace when set, and sets `raw=True` implicitly.
+</ParamField>
+
+### `QueryManager`
+
+`QueryManager` runs any number of `Query` instances for a single check instance. It integrates with `check_initializations` so queries are compiled before the first run.
+
+```python
+from datadog_checks.base.utils.db import QueryManager
+
+import queries
+
+
+class MyDatabaseCheck(AgentCheck):
+    def __init__(self, name, init_config, instances):
+        super().__init__(name, init_config, instances)
+
+        self._query_manager = QueryManager(
+            self,
+            self.execute_query,
+            queries=[
+                queries.ActiveConnections,
+                queries.SlowQueries,
+            ],
+            tags=self.instance.get('tags', []),
+            error_handler=self._sanitize_error,
+        )
+        self.check_initializations.append(self._query_manager.compile_queries)
+
+    def check(self, instance):
+        self._query_manager.execute()
+
+    def execute_query(self, query):
+        # Returns an iterable of rows
+        cursor = self._connection.cursor()
+        cursor.execute(query)
+        return cursor.fetchall()
+```
+
+<ParamField path="check" type="AgentCheck" required>
+  The check instance. Used for metric submission and logging.
+</ParamField>
+<ParamField path="executor" type="callable" required>
+  A callable that accepts a query string and returns a sequence or iterator of rows. Each row must be a sequence with one value per column.
+</ParamField>
+<ParamField path="queries" type="list[dict]">
+  A list of query dicts to run. Each dict is passed to a `Query` instance.
+</ParamField>
+<ParamField path="tags" type="list[str]">
+  Tags to add to all metrics from all queries.
+</ParamField>
+<ParamField path="error_handler" type="callable">
+  A callable that accepts an error string and returns a sanitized version. Use this to scrub sensitive information from database error messages.
+</ParamField>
+<ParamField path="hostname" type="str">
+  The hostname to associate with all submitted metrics.
+</ParamField>
+
+## Column transformers
+
+Each column in a query result must have a `type` that tells the framework what to do with the value.
+
+### Metric types
+
+Use these types to submit the column value as a Datadog metric:
+
+| Type | Datadog metric type | Notes |
+|---|---|---|
+| `gauge` | gauge | The column value submitted as-is. |
+| `count` | count | Total event count for the interval. |
+| `monotonic_count` | monotonic_count | Incrementing counter; Agent computes the delta. |
+| `rate` | rate | Per-second rate; Agent divides by the interval. |
+| `histogram` | histogram | Submits a distribution. |
+| `historate` | historate | Rate-based distribution. |
+
+### Tag types
+
+Use these types to extract tag values from columns:
+
+| Type | Behavior |
+|---|---|
+| `tag` | Appends `name:value` to the tags for all subsequent metrics in the row. |
+| `tag_list` | Splits the column value on a delimiter and appends multiple tags. |
+| `source` | Stores the column value for use by `extras`, but submits nothing. |
+
+### Special column transformers
+
+<Expandable title="match">
+Maps specific column values to tag values using a lookup dict. Useful when a database returns numeric status codes that should be converted to readable tags.
+
+```yaml
+columns:
+  - name: status_code
+    type: match
+    source: status_code
+    items:
+      '0': 'status:active'
+      '1': 'status:inactive'
+      '2': 'status:error'
+    default: 'status:unknown'
+```
+</Expandable>
+
+<Expandable title="temporal_percent">
+Computes a percentage by dividing the column value by a time interval. Useful for database statistics that represent time spent in a state.
+
+```yaml
+columns:
+  - name: postgresql.bgwriter.buffers_alloc
+    type: temporal_percent
+    scale: milliseconds
+```
+</Expandable>
+
+<Expandable title="time_elapsed">
+Converts the column value to the number of seconds elapsed since a reference time.
+</Expandable>
+
+<Expandable title="monotonic_gauge">
+Submits both a `monotonic_count` and a `gauge` for the same column value. Useful for counters where you want both the cumulative total and the current snapshot.
+</Expandable>
+
+<Expandable title="service_check">
+Submits a service check based on the column value. The column value is mapped to a service check status.
+</Expandable>
+
+## Extra transformers
+
+Extras are computed metrics derived from column values after all column transformers have run. They reference column values by name using the `source` field.
+
+```yaml
+columns:
+  - name: foo.bar
+    type: rate
+extras:
+  - name: foo.current
+    type: gauge
+    source: foo.bar
+```
+
+This submits `foo.current` as a gauge with the value of `foo.bar`.
+
+### Additional extra-only transformers
+
+<Expandable title="percent">
+Computes a ratio of two source columns and multiplies by 100.
+
+```yaml
+extras:
+  - name: cache.hit_ratio
+    type: percent
+    part: cache_hits
+    total: cache_total
+```
+</Expandable>
+
+<Expandable title="expression">
+Evaluates a Python expression over source column values.
+
+```yaml
+extras:
+  - name: derived.metric
+    type: expression
+    expression: source['col_a'] + source['col_b']
+    submit_type: gauge
+```
+</Expandable>
+
+<Expandable title="log">
+Sends a log entry built from column values.
+</Expandable>
+
+## Custom queries
+
+`QueryManager` also reads custom queries from the check instance and `init_config`. Users can add queries without changing integration code:
+
+```yaml
+instances:
+  - host: localhost
+    custom_queries:
+      - name: my_custom_query
+        query: SELECT count(*) FROM my_table WHERE status = 'active'
+        columns:
+          - name: myapp.active_rows
+            type: gauge
+        tags:
+          - 'table:my_table'
+```
+
+Set `only_custom_queries: true` in the instance to disable the integration's built-in queries and run only custom ones.

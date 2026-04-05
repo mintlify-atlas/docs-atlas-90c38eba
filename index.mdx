@@ -1,97 +1,83 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Datadog Integrations Core"
+description: "The open-source framework and CLI toolchain for developing, testing, and maintaining official Datadog Agent integrations."
 ---
 
-## Setting up
+Welcome to the developer documentation for **Datadog Integrations Core** — the repository that powers 400+ official Agent integrations shipping with every Datadog Agent release.
 
-Get your documentation site up and running in minutes.
+Whether you're building a new integration, contributing to an existing one, or exploring how the internals work, this is your reference.
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Get Started" icon="rocket" href="/setup">
+    Set up your development environment and write your first Check in minutes.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Base Package API" icon="code" href="/base/api">
+    Full API reference for AgentCheck — metrics, events, service checks, logs, and more.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Testing Guide" icon="flask" href="/testing">
+    Run unit, integration, and E2E tests with the ddev CLI and pytest framework.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="ddev CLI Reference" icon="terminal" href="/ddev/cli">
+    Explore every command for managing integrations, environments, and releases.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## What's in this repository
 
-Everything you need to create world-class documentation.
+Integrations Core is split into several key components:
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
+<CardGroup cols={2}>
+  <Card title="datadog_checks_base" icon="cube" href="/base/overview">
+    The Python base package every integration inherits from. Provides AgentCheck, HTTP wrappers, OpenMetrics scrapers, database helpers, and more.
   </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
+  <Card title="ddev" icon="wrench" href="/ddev/overview">
+    The developer CLI tool for running tests, managing E2E environments, validating configs, and cutting releases.
   </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
+  <Card title="400+ Integrations" icon="plug" href="https://github.com/DataDog/integrations-core">
+    From PostgreSQL to Kubernetes, Kafka to vSphere — every officially supported integration lives here.
   </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
+  <Card title="Contributing Guidelines" icon="book" href="/guidelines/pull-requests">
+    Learn the PR workflow, changelog conventions, and code style rules for contributing.
   </Card>
-</Columns>
+</CardGroup>
 
-## Need inspiration?
+## Quick start
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<Steps>
+  <Step title="Install Python 3.13 and ddev">
+    Follow the [setup guide](/setup) to install the required Python version and the `ddev` CLI tool.
+  </Step>
+  <Step title="Write your first Check">
+    Subclass `AgentCheck` from the base package and implement the `check` method.
+
+    ```python
+    from datadog_checks.base import AgentCheck
+
+    class MyCheck(AgentCheck):
+        __NAMESPACE__ = 'my_integration'
+
+        def check(self, instance):
+            self.gauge('up', 1, tags=['env:prod'])
+    ```
+  </Step>
+  <Step title="Run tests">
+    Use `ddev test` to run the integration's unit and integration tests with automatic environment management.
+
+    ```bash
+    ddev test my_integration
+    ```
+  </Step>
+  <Step title="Test against a live Agent">
+    Start an E2E environment to verify your integration against a real Datadog Agent running in Docker.
+
+    ```bash
+    ddev env start my_integration py3.12-1.0
+    ddev env test my_integration py3.12-1.0
+    ddev env stop my_integration py3.12-1.0
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  To add a new integration, open a pull request in [integrations-extras](https://github.com/DataDog/integrations-extras) rather than this repository. This repo is for officially maintained integrations only.
+</Note>

@@ -1,0 +1,199 @@
+---
+title: "Multi-repo and worktrees"
+description: "Use .ddev.toml local overrides to work seamlessly across multiple repositories and Git worktrees without changing your global ddev configuration."
+---
+
+`ddev` uses a single global config file, but integrations developers often work across multiple repositories (`integrations-core`, `integrations-extras`, `datadog-agent`) or maintain several Git worktrees of the same repository simultaneously.
+
+Local configuration overrides using a `.ddev.toml` file solve this without requiring you to modify the global config every time you switch context.
+
+## How local overrides work
+
+When you run any `ddev` command, it searches for a `.ddev.toml` file starting from the current working directory and traversing up the directory tree. If found, settings in that file take precedence over the same settings in the global `config.toml`. Settings present in only one file are merged normally.
+
+Key behaviors:
+
+- **Closest file wins.** `ddev` uses the nearest `.ddev.toml` it finds while walking up from your current directory.
+- **Merge semantics.** Overrides do not replace the global config wholesale — they overlay it. Settings missing from `.ddev.toml` still come from the global config.
+- **Automatic scoping.** If you `cd` out of a directory containing `.ddev.toml`, the override stops applying with no manual action needed.
+
+## Creating an override with ddev config override
+
+The fastest way to create a `.ddev.toml` for the current directory is:
+
+```bash
+ddev config override
+```
+
+`ddev` reads the `[tool.ddev]` table in the `pyproject.toml` at the repository root to detect which repo you are in and sets the path accordingly.
+
+```toml
+# pyproject.toml
+[tool.ddev]
+repo = "core"
+```
+
+Valid values for `repo` are `core`, `extras`, `internal`, `agent`, `marketplace`, and `integrations-internal-core`.
+
+After running the command, `ddev` prints what was written:
+
+```
+Local repo configuration added in .ddev.toml
+
+Local config content:
+repo = "core"
+
+[repos]
+core = "/some/parent/directory/integrations-core/issue_XYZ"
+```
+
+If `ddev` cannot detect the repo automatically (no `pyproject.toml`, no `[tool.ddev]` table, or an unrecognized repo name), it prompts you to specify the repo manually.
+
+## Working with Git worktrees
+
+A common use case is maintaining a main checkout alongside one or more worktrees for in-progress branches.
+
+```
+/some/parent/directory/
+│
+└── integrations-core/        ← main checkout (branch: main)
+    │
+    ├── pyproject.toml
+    ├── ddev/
+    └── issue_XYZ/            ← git worktree (branch: feature/XYZ)
+        │
+        ├── pyproject.toml
+        └── ddev/
+```
+
+Without an override, `ddev` always resolves the `core` repo to whatever path is in your global config — meaning it would operate on the main checkout even when you are inside the worktree.
+
+To make `ddev` point at the worktree, run this from inside `issue_XYZ/`:
+
+```bash
+ddev config override
+```
+
+The generated `.ddev.toml` sets `repos.core` to the absolute path of the worktree. From that point on, any `ddev` command you run from inside `issue_XYZ/` operates on the worktree. Returning to the main `integrations-core/` directory restores normal behavior because that directory has no `.ddev.toml`.
+
+## Switching between repos in different directories
+
+If you have `integrations-core` and `integrations-extras` checked out side by side, create a `.ddev.toml` in each root directory:
+
+<CodeGroup>
+
+```toml integrations-core/.ddev.toml
+repo = "core"
+
+[repos]
+core = "/path/to/integrations-core"
+```
+
+```toml integrations-extras/.ddev.toml
+repo = "extras"
+
+[repos]
+extras = "/path/to/integrations-extras"
+```
+
+</CodeGroup>
+
+Now `ddev test nginx` inside `integrations-core/` targets the `core` repo, and `ddev test my_custom_check` inside `integrations-extras/` targets the `extras` repo — without changing the global config.
+
+## Config commands with overrides
+
+The presence of an active `.ddev.toml` changes the behavior of several `ddev config` commands.
+
+### ddev config show
+
+Displays the merged configuration, annotating each line with its source file and line number:
+
+```toml
+repo = "extras"                       # Overrides:1
+agent = "dev"                         # GlobalConfig:2
+org = "default"                       # GlobalConfig:3
+
+[repos]                               # GlobalConfig:5
+core = "~/dd/integrations-core"       # GlobalConfig:6
+extras = "~/dd/integrations-extras"   # GlobalConfig:7
+marketplace = "~/dd/marketplace"      # GlobalConfig:8
+agent = "~/dd/datadog-agent"          # GlobalConfig:9
+
+...
+
+[github]                              # Overrides:3
+user = "test-user"                    # Overrides:4
+token = "*****"                       # GlobalConfig:28
+```
+
+### ddev config set
+
+Without `--overrides`, modifies the global `config.toml`:
+
+```bash
+ddev config set repo core
+```
+
+With `--overrides`, writes to the `.ddev.toml` in the current directory (creating it with a prompt if it does not exist):
+
+```bash
+ddev config set repo extras --overrides
+```
+
+### ddev config edit
+
+Without `--overrides`, opens the global config in your editor. With `--overrides`, opens the discovered `.ddev.toml`:
+
+```bash
+ddev config edit --overrides
+```
+
+This aborts if no `.ddev.toml` is found in the directory tree.
+
+### ddev config find
+
+Shows the global config path. When overrides are active, also shows the `.ddev.toml` path:
+
+<CodeGroup>
+
+```bash With overrides active
+$ ddev config find
+/Users/you/.config/ddev/config.toml
+----- Overrides applied from .ddev.toml
+```
+
+```bash Without overrides
+$ ddev config find
+/Users/you/.config/ddev/config.toml
+```
+
+</CodeGroup>
+
+### ddev config restore
+
+Resets the global config to defaults. Prompts whether to delete an active `.ddev.toml`:
+
+<CodeGroup>
+
+```bash Without overrides
+$ ddev config restore
+Settings were successfully restored.
+```
+
+```bash With overrides
+$ ddev config restore
+Settings were successfully restored.
+Overrides file found in '/path/to/.ddev.toml'. Do you want to delete it? [y/N]: y
+Overrides deleted.
+```
+
+</CodeGroup>
+
+## Config precedence summary
+
+| Source | Precedence |
+|---|---|
+| `.ddev.toml` in current or parent directory | Highest — overrides global config |
+| Global `config.toml` | Base configuration |
+
+Settings present only in the global config are still applied even when a `.ddev.toml` is active.

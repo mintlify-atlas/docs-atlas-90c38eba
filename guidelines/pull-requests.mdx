@@ -1,0 +1,156 @@
+---
+title: "Pull requests"
+description: "PR workflow, separation of concerns, squash-and-merge policy, and changelog entry requirements for integrations-core and integrations-extras."
+---
+
+## Separation of concerns
+
+Every pull request should do one thing only for easier Git management. For example, if you are editing documentation and notice an error in the shipped example configuration, fix the error in a separate pull request. Doing so enables a clean cherry-pick or revert of the bug fix should the need arise.
+
+## Merges
+
+Datadog only allows GitHub's squash and merge to keep a clean Git history. Do not submit PRs that assume a rebase or merge-commit workflow.
+
+## PR title
+
+The PR title is used to automatically fill changelog entries unless the PR carries the `changelog/no-changelog` label. Write a title that is concise but explanatory — it should stand alone as a summary of the change.
+
+## Commit messages
+
+Write meaningful commit messages. The commit message should describe the reason for the change and give extra details that allow someone to understand in five seconds the thing you have been working on for a day.
+
+<Warning>
+Avoid vague messages like `git commit -m "Fixed stuff"`. Poor commit messages make the Git history useless for debugging and auditing.
+</Warning>
+
+## Changelog entries
+
+Requirements differ depending on which repository you are contributing to.
+
+<Tabs>
+  <Tab title="integrations-core">
+    Changelog entries are required for all Python changes in `datadog_checks` subdirectories. Changes to tests or assets do not require a changelog entry.
+
+    <Warning>
+      Changelog files **must** be created using the `ddev release changelog new` command. Do not create or edit changelog files manually.
+    </Warning>
+
+    The command places a file inside the integration's `changelog.d/` directory, named `<PR_NUMBER>.<TYPE>`. Commit these files and push them to your PR.
+
+    ### Command format
+
+    ```bash
+    ddev release changelog new <TYPE> <INTEGRATION> -m "<MESSAGE>"
+    ```
+
+    ### Changelog types and version bumps
+
+    | Type | Semver impact | When to use |
+    | --- | --- | --- |
+    | `fixed` | Patch (1.0.0 → 1.0.1) | Bug fixes |
+    | `added` | Minor (1.0.0 → 1.1.0) | New features or non-trivial refactors |
+    | `changed` | Major (1.0.0 → 2.0.0) | Breaking changes or significant modifications |
+
+    ### Examples
+
+    ```bash
+    # New feature
+    ddev release changelog new added kafka_consumer -m "Bump OpenSSL in confluent-kafka to 3.4.1 on Windows."
+
+    # Bug fix
+    ddev release changelog new fixed sqlserver -m "Fix a bug where tempdb is wrongly excluded from database files metrics."
+
+    # Breaking change
+    ddev release changelog new changed postgres -m "Update configuration options for connection pooling."
+    ```
+
+    <Note>
+      If your change will not be shipped with the Agent, add the `changelog/no-changelog` label to the PR to skip the CI changelog check.
+    </Note>
+  </Tab>
+  <Tab title="integrations-extras and marketplace">
+    Every PR must add a changelog entry to each integration whose shipped code has been modified.
+
+    Each integration has its own `CHANGELOG.md` at the root of its directory. Entries accumulate under the `Unreleased` section and are moved to their own versioned section at release time.
+
+    ### Example `CHANGELOG.md` structure
+
+    ```markdown
+    # CHANGELOG - Foo
+
+    ## Unreleased
+
+    ***Changed***:
+
+    * Made a breaking change ([#9000](https://github.com/DataDog/repo/pull/9000))
+
+        Here's some extra context [...]
+
+    ***Added***:
+
+    * Add a cool feature ([#42](https://github.com/DataDog/repo/pull/42))
+
+    ## 1.2.3 / 2081-04-01
+
+    ***Fixed***:
+
+    ...
+    ```
+
+    ### Changelog types
+
+    The project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) types:
+
+    | Type | When to use |
+    | --- | --- |
+    | `Added` | New features or non-trivial refactors |
+    | `Changed` | Changes in existing functionality |
+    | `Deprecated` | Soon-to-be removed features |
+    | `Removed` | Removed features |
+    | `Fixed` | Bug fixes |
+    | `Security` | Security vulnerability fixes |
+
+    The first line of every new changelog entry must end with a link to the PR in which the change occurred. To automatically apply this suffix to manually added entries, run the `release changelog fix` command. To create new entries interactively, use the `release changelog new` command.
+
+    <Note>
+      Apply the `changelog/no-changelog` label to remove the CI check for changelog entries when the change does not warrant one.
+    </Note>
+  </Tab>
+</Tabs>
+
+## Changelog formatting rules
+
+<AccordionGroup>
+  <Accordion title="Spacing">
+    There must be a blank line between each of the following sections:
+
+    - Changelog file header
+    - `Unreleased` header
+    - Version / date header
+    - Change type (e.g. `Fixed`, `Added`)
+    - Specific descriptions of changes
+
+    Within a list of change descriptions, do **not** add blank lines between bullet points.
+
+    - `Extra spacing on line {line number}` — Remove the extra blank line on the referenced line.
+    - `Missing spacing on line {line number}` — Add a blank line above or below the referenced line.
+  </Accordion>
+  <Accordion title="Version header format">
+    The header for an integration version must follow this format:
+
+    ```
+    version number / YYYY-MM-DD / Agent Version Number
+    ```
+
+    The Agent version number is optional, but a valid version number and date are required. The first header after the file title may be `Unreleased`.
+
+    - `Version is formatted incorrectly on line {line number}` — The version is not valid, or there is no `/` separator between the version and date.
+    - `Date is formatted incorrectly on line {line number}` — The date must be `YYYY-MM-DD` with no spaces.
+  </Accordion>
+  <Accordion title="Content rules">
+    - The changelog type header must be capitalized and written as `***HEADER***:` — bold and italicized.
+    - `Changelog type is incorrect on line {line count}` — The header is not one of the six valid types.
+    - `Changelog header order is incorrect on line {line count}` — Check that type headers appear in the correct priority order.
+    - `Changelogs should start with asterisks, on line {line count}` — All change descriptions must be bullet points using asterisks (`*`).
+  </Accordion>
+</AccordionGroup>

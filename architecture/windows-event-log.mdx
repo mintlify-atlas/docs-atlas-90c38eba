@@ -1,0 +1,152 @@
+---
+title: "Windows Event Log Integration Architecture"
+description: "How the Datadog Windows Event Log integration subscribes to event channels, filters events with XPath queries, and persists bookmarks for reliable incremental collection."
+---
+
+## Overview
+
+The Windows Event Log integration collects events from Windows event channels such as `System`, `Application`, and custom application channels. It provides flexible filtering, efficient kernel-level event selection, and persistent bookmarks to avoid duplicate events across Agent restarts.
+
+## Channel selection
+
+You configure the integration with a `path` that names the channel from which to collect events:
+
+```yaml
+instances:
+  - path: System
+  - path: Application
+  - path: Security
+```
+
+## Event filtering
+
+The integration offers three filtering mechanisms. You can combine `query`/`filters` with `included_messages`/`excluded_messages`, but `query` and `filters` are mutually exclusive.
+
+<Tabs>
+  <Tab title="query">
+    A raw XPath or structured XML query that filters events before they are delivered to the check. All filtering is performed by the Windows kernel, which gives the best performance and lowest bandwidth usage when connecting to remote machines.
+
+    ```yaml
+    instances:
+      - path: System
+        query: >
+          *[System[(Level=1 or Level=2) and (EventID=1000 or EventID=1001)]]
+    ```
+  </Tab>
+  <Tab title="filters">
+    A convenience option for common filtering needs. You provide a mapping of event properties to allowed values. All filters use `AND` logic between properties and `OR` logic within a property's value list.
+
+    Internally, the integration converts the `filters` mapping into an XPath expression and passes it to the kernel — the same mechanism as `query`. This means no in-check filtering occurs; all work is offloaded to the OS.
+
+    ```yaml
+    instances:
+      - path: System
+        filters:
+          id:
+            - 1000
+            - 1001
+          level:
+            - critical
+            - error
+          source:
+            - Microsoft-Windows-Security-Auditing
+    ```
+
+    <Note>
+      Setting `filters` overrides any `query` value. Use `query` when you need expressions that `filters` cannot express.
+    </Note>
+  </Tab>
+  <Tab title="included_messages / excluded_messages">
+    Regular expression patterns that match against event message text. These operate inside the check after events are received, because there is no XPath construct available for filtering on message content.
+
+    The `excluded_messages` list takes precedence over `included_messages`.
+
+    ```yaml
+    instances:
+      - path: Application
+        included_messages:
+          - ".*connection refused.*"
+          - ".*timeout.*"
+        excluded_messages:
+          - ".*test.*"
+    ```
+
+    You can combine these with `query` or `filters` for multi-layer filtering.
+  </Tab>
+</Tabs>
+
+## Subscription model
+
+### Check (pull subscription)
+
+The check uses a [pull subscription model](https://docs.microsoft.com/en-us/windows/win32/wes/subscribing-to-events#pull-subscriptions). On each check run:
+
+<Steps>
+  <Step title="Wait for signal">
+    The cached event log handle waits to be signaled for a configurable number of seconds. This avoids busy-polling.
+  </Step>
+  <Step title="Poll available events">
+    If signaled, the check polls all available events in configurable batch sizes.
+  </Step>
+  <Step title="Process and submit">
+    Events are processed, filtered (if `included_messages`/`excluded_messages` are set), and submitted to Datadog.
+  </Step>
+</Steps>
+
+### Logs pipeline (push subscription)
+
+When you configure events to be submitted as logs rather than metrics, a different code path is used. The logs implementation lives in the Agent's Go package at `pkg/logs/internal/tailers/windowsevent` and uses a [push subscription model](https://docs.microsoft.com/en-us/windows/win32/wes/subscribing-to-events#push-subscriptions).
+
+<Warning>
+  The logs pipeline supports only a subset of the check's functionality. Each log source configuration collects all events from the given channel without filtering, tagging, or remote connection options.
+</Warning>
+
+A small amount of C code handles rendering the event data and registering the Go tailer callback that ultimately sends logs to the Datadog backend.
+
+## Bookmark management
+
+The integration saves a **bookmark** — a reference to the most recently processed event — to the filesystem at configurable intervals.
+
+This bookmark serves one purpose: preventing duplicate events from being re-submitted after an Agent restart. It is especially important when `start` is set to `oldest`, which would otherwise replay all events in the channel on restart.
+
+```yaml
+instances:
+  - path: System
+    start: oldest        # Collect from the oldest available event on first run
+    # Bookmarks are written periodically to disk and read on Agent startup
+```
+
+<Tip>
+  Bookmark files are stored locally on the Windows host. If you move the Agent to a different machine or wipe the Agent data directory, the next startup will re-process events from the configured `start` position.
+</Tip>
+
+## Legacy mode
+
+<Warning>
+  Legacy mode uses WMI to collect events and is significantly more resource intensive. It uses entirely different configuration options and will be removed in a future release. Agent 6 is limited to legacy mode because Python 2 does not support the current implementation.
+</Warning>
+
+Enable legacy mode only if you cannot use the default implementation:
+
+```yaml
+instances:
+  - path: System
+    legacy_mode: true
+```
+
+## Architecture summary
+
+<CardGroup cols={2}>
+  <Card title="Pull subscription (check)" icon="arrow-down-to-line">
+    Used by the SNMP check integration. Polls events in batches on each check run. Supports full filtering, tagging, and remote connections.
+  </Card>
+  <Card title="Push subscription (logs)" icon="arrow-up-from-line">
+    Used by the Agent logs pipeline. Receives events via callback as they occur. No filtering or tagging support; collects all events in the channel.
+  </Card>
+  <Card title="XPath / kernel filtering" icon="filter">
+    Both `query` and `filters` options offload event selection to the Windows kernel. This is more efficient than collecting all events and discarding unwanted ones inside the check.
+  </Card>
+  <Card title="Bookmark persistence" icon="bookmark">
+    The most recently seen event is saved to disk at configurable intervals, ensuring Agent restarts do not produce duplicate events.
+  </Card>
+</CardGroup>

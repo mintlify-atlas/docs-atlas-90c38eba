@@ -1,0 +1,339 @@
+---
+title: "Setup"
+description: "How to set up your local development environment: clone the repository, install Python 3.13, install pipx, install and configure ddev, and install Docker."
+---
+
+This guide walks you through everything you need to start developing Agent integrations locally.
+
+<Steps>
+
+<Step title="Clone the repository">
+
+Clone [integrations-core](https://github.com/DataDog/integrations-core) and/or [integrations-extras](https://github.com/DataDog/integrations-extras) depending on which integrations you intend to work on.
+
+```bash
+git clone https://github.com/DataDog/integrations-core.git
+```
+
+</Step>
+
+<Step title="Install Python 3.13">
+
+Every integration requires Python 3.13. After installation, restart your terminal and verify that the newly installed Python comes first in your `PATH`.
+
+<Tabs>
+  <Tab title="macOS">
+    Update Homebrew, then install Python:
+
+    ```bash
+    brew update
+    brew install python@3.13
+    ```
+
+    Check the output — Homebrew may ask you to run additional commands to finish setting up your `PATH`. Run any commands it suggests, then verify:
+
+    ```bash
+    which -a python
+    ```
+  </Tab>
+  <Tab title="Windows">
+    Download the [Python 3.13 64-bit executable installer](https://www.python.org/downloads/release/python-3124/) and run it. When prompted, select the option to add Python to your `PATH`. The per-user installation method is recommended.
+
+    Verify the installation:
+
+    ```powershell
+    where python
+    ```
+  </Tab>
+  <Tab title="Linux">
+    Use [Miniconda](https://docs.conda.io/en/latest/miniconda.html) or [pyenv](https://github.com/pyenv/pyenv) to install Python 3.13. Never modify the system Python.
+
+    Verify the installation:
+
+    ```bash
+    which -a python
+    ```
+  </Tab>
+</Tabs>
+
+</Step>
+
+<Step title="Install pipx">
+
+[pipx](https://github.com/pypa/pipx) installs Python CLI tools in isolated environments. You need it to install `ddev`.
+
+<Tabs>
+  <Tab title="macOS">
+    ```bash
+    brew install pipx
+    ```
+
+    Check the output for any follow-up commands Homebrew asks you to run, then verify:
+
+    ```bash
+    which -a pipx
+    ```
+  </Tab>
+  <Tab title="Windows">
+    ```powershell
+    python -m pip install pipx
+    ```
+
+    Verify:
+
+    ```powershell
+    where pipx
+    ```
+  </Tab>
+  <Tab title="Linux">
+    ```bash
+    python -m pip install --user pipx
+    python -m pipx ensurepath
+    ```
+
+    Restart your shell or reload `PATH` (for bash: `source ~/.bashrc`), then verify:
+
+    ```bash
+    which -a pipx
+    ```
+  </Tab>
+</Tabs>
+
+</Step>
+
+<Step title="Install ddev">
+
+You have four installation options. Choose the one that fits your workflow.
+
+<AccordionGroup>
+
+<Accordion title="GUI installer (recommended for most users)">
+
+<Tabs>
+  <Tab title="macOS">
+    1. Download `ddev-<version>.pkg` from the [latest release](https://github.com/DataDog/integrations-core/releases/latest).
+    2. Run the downloaded file and follow the on-screen instructions.
+    3. Restart your terminal.
+    4. Verify:
+
+    ```bash
+    ddev --version
+    ```
+  </Tab>
+  <Tab title="Windows">
+    1. Download the `.msi` installer from the [latest release](https://github.com/DataDog/integrations-core/releases/latest):
+       - `ddev-<version>-x64.msi` for 64-bit systems
+       - `ddev-<version>-x86.msi` for 32-bit systems
+    2. Run the downloaded file and follow the on-screen instructions.
+    3. Restart your terminal.
+    4. Verify:
+
+    ```powershell
+    ddev --version
+    ```
+  </Tab>
+</Tabs>
+
+</Accordion>
+
+<Accordion title="Standalone binary">
+
+Download the archive for your platform from the [latest release](https://github.com/DataDog/integrations-core/releases/latest), extract the binary, and place it in a directory on your `PATH` named `ddev`.
+
+<Tabs>
+  <Tab title="macOS">
+    - `ddev-<version>-aarch64-apple-darwin.tar.gz` (Apple Silicon)
+    - `ddev-<version>-x86_64-apple-darwin.tar.gz` (Intel)
+  </Tab>
+  <Tab title="Windows">
+    - `ddev-<version>-x86_64-pc-windows-msvc.zip` (64-bit)
+    - `ddev-<version>-i686-pc-windows-msvc.zip` (32-bit)
+  </Tab>
+  <Tab title="Linux">
+    - `ddev-<version>-aarch64-unknown-linux-gnu.tar.gz` (ARM64)
+    - `ddev-<version>-x86_64-unknown-linux-gnu.tar.gz` (x86-64, glibc)
+    - `ddev-<version>-x86_64-unknown-linux-musl.tar.gz` (x86-64, musl)
+    - `ddev-<version>-i686-unknown-linux-gnu.tar.gz` (32-bit)
+    - `ddev-<version>-powerpc64le-unknown-linux-gnu.tar.gz` (ppc64le)
+  </Tab>
+</Tabs>
+
+</Accordion>
+
+<Accordion title="PyPI via pipx">
+
+<Tabs>
+  <Tab title="macOS">
+    Remove any existing `ddev` executables and deactivate any active virtual environments first, then run:
+
+    <Tabs>
+      <Tab title="Apple Silicon">
+        ```bash
+        pipx install ddev --python /opt/homebrew/bin/python3.13
+        ```
+      </Tab>
+      <Tab title="Intel">
+        ```bash
+        pipx install ddev --python /usr/local/bin/python3.13
+        ```
+      </Tab>
+    </Tabs>
+
+    <Warning>
+      Do not use `sudo` — it may result in a broken installation.
+    </Warning>
+  </Tab>
+  <Tab title="Windows">
+    ```powershell
+    pipx install ddev
+    ```
+  </Tab>
+  <Tab title="Linux">
+    ```bash
+    pipx install ddev
+    ```
+
+    Restart your shell or reload `PATH` after installation.
+
+    <Warning>
+      Do not use `sudo` — it may result in a broken installation.
+    </Warning>
+  </Tab>
+</Tabs>
+
+Upgrade at any time:
+
+```bash
+pipx upgrade ddev
+```
+
+</Accordion>
+
+<Accordion title="Development mode (from your local clone)">
+
+Use this if you want `ddev` to always reflect the current state of your local `integrations-core` branch.
+
+<Tabs>
+  <Tab title="macOS">
+    <Tabs>
+      <Tab title="Apple Silicon">
+        ```bash
+        pipx install -e /path/to/integrations-core/ddev --python /opt/homebrew/opt/python@3.13/bin/python3.13
+        ```
+      </Tab>
+      <Tab title="Intel">
+        ```bash
+        pipx install -e /path/to/integrations-core/ddev --python /usr/local/opt/python@3.13/bin/python3.13
+        ```
+      </Tab>
+    </Tabs>
+
+    <Warning>
+      Do not use `sudo` — it may result in a broken installation.
+    </Warning>
+  </Tab>
+  <Tab title="Windows">
+    ```powershell
+    pipx install -e /path/to/integrations-core/ddev
+    ```
+  </Tab>
+  <Tab title="Linux">
+    ```bash
+    pipx install -e /path/to/integrations-core/ddev
+    ```
+
+    <Warning>
+      Do not use `sudo` — it may result in a broken installation.
+    </Warning>
+  </Tab>
+</Tabs>
+
+Re-sync dependencies at any time by running:
+
+```bash
+pipx upgrade ddev
+```
+
+<Note>
+  Development mode does not automatically track dependency changes. Re-run `pipx upgrade ddev` whenever the required dependencies change.
+</Note>
+
+<Note>
+  If you have unreleased changes in `datadog_checks_dev` that affect `ddev`, inject them manually:
+
+  ```bash
+  pipx inject -e ddev "/path/to/datadog_checks_dev"
+  ```
+</Note>
+
+</Accordion>
+
+</AccordionGroup>
+
+</Step>
+
+<Step title="Configure ddev">
+
+On first run, `ddev` creates a config file automatically. You need to tell it where you cloned the repositories:
+
+```bash
+ddev config set repos.core /path/to/integrations-core
+ddev config set repos.extras /path/to/integrations-extras
+```
+
+By default, all `ddev` commands target the `core` repository. To switch to `integrations-extras`:
+
+```bash
+ddev config set repo extras
+```
+
+</Step>
+
+<Step title="Install Docker">
+
+Docker is required for nearly every integration's test suite.
+
+<Tabs>
+  <Tab title="macOS">
+    1. Install [Docker Desktop for Mac](https://docs.docker.com/desktop/install/mac-install/).
+    2. Right-click the Docker taskbar item and update **Preferences > File Sharing** with any locations you need to mount.
+  </Tab>
+  <Tab title="Windows">
+    1. Install [Docker Desktop for Windows](https://docs.docker.com/desktop/install/windows-install/).
+    2. Right-click the Docker taskbar item and update **Settings > Shared Drives** to include any drives you'll use (e.g. `C:\`).
+  </Tab>
+  <Tab title="Linux">
+    1. Install Docker Engine for your distribution:
+
+       <Tabs>
+         <Tab title="Ubuntu">
+           Follow the [Docker CE for Ubuntu](https://docs.docker.com/engine/install/ubuntu/) guide.
+         </Tab>
+         <Tab title="Debian">
+           Follow the [Docker CE for Debian](https://docs.docker.com/engine/install/debian/) guide.
+         </Tab>
+         <Tab title="Fedora">
+           Follow the [Docker CE for Fedora](https://docs.docker.com/engine/install/fedora/) guide.
+         </Tab>
+         <Tab title="CentOS">
+           Follow the [Docker CE for CentOS](https://docs.docker.com/engine/install/centos/) guide.
+         </Tab>
+       </Tabs>
+
+    2. Add your user to the `docker` group:
+
+       ```bash
+       sudo usermod -aG docker $USER
+       ```
+
+    3. Sign out and back in for the group change to take effect.
+  </Tab>
+</Tabs>
+
+After installation, restart your terminal.
+
+</Step>
+
+</Steps>
+
+Your environment is ready. Head to the [testing guide](/testing) to run your first integration tests.

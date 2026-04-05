@@ -1,0 +1,228 @@
+---
+title: "Building JMX integrations"
+description: "A step-by-step tutorial for creating Datadog integrations that collect metrics from Java Management Extensions (JMX) endpoints."
+---
+
+JMX integrations collect metrics from Java applications that expose management data through the Java Management Extensions (JMX) protocol. Rather than writing a Python check that communicates with JMX directly, Datadog uses JMXFetch — a Java-based component that connects to JMX endpoints, collects beans and their attributes, and forwards the results to the Agent.
+
+Use a JMX integration when the target service is a JVM-based application that exposes metrics through JMX beans, such as Apache ActiveMQ, Kafka, Tomcat, or any other Java service with a JMX port enabled.
+
+## How JMX integrations work
+
+When the Datadog Agent runs a JMX integration, it delegates metric collection to JMXFetch. JMXFetch connects to the JMX endpoint defined in the instance configuration, queries the beans matched by the filters in `metrics.yaml`, and submits the attribute values as metrics.
+
+The key configuration files are:
+
+- **`conf.yaml`** — instance and init configuration, including connection details and JMX-specific flags.
+- **`metrics.yaml`** — metric filter definitions that tell JMXFetch which beans and attributes to collect.
+
+## Prerequisites
+
+- The `ddev` CLI tool installed and configured.
+- A running JMX-enabled Java service, or access to one for testing.
+- JDK installed if you plan to use `jconsole` or `jmxterm` locally.
+
+## Create a JMX integration
+
+<Steps>
+  <Step title="Scaffold the integration">
+    Use `ddev` to generate the integration scaffolding with the JMX type:
+
+    ```bash
+    ddev create --type jmx MyJMXIntegration
+    ```
+
+    This creates a directory with the standard integration layout, including a `metrics.yaml` file and a `conf.yaml.example` pre-configured for JMX.
+  </Step>
+
+  <Step title="Configure the instance">
+    The generated `conf.yaml.example` includes JMX-specific init and instance config. The `is_jmx: true` flag in `init_config` tells the Agent to route this integration through JMXFetch:
+
+    ```yaml
+    init_config:
+        is_jmx: true                   # tells the Agent that the integration is a JMX type
+        collect_default_metrics: true  # if true, metrics declared in metrics.yaml are collected
+
+    instances:
+      - host: <HOST>                   # JMX hostname
+        port: <PORT>                   # JMX port
+    ```
+
+    Additional connection options available in the instance config include:
+
+    | Option | Description |
+    |---|---|
+    | `user` | Username for JMX authentication |
+    | `password` | Password for JMX authentication |
+    | `jmx_url` | Full JMX URL, for non-standard connection strings |
+    | `process_name_regex` | Match processes by regex instead of host/port |
+    | `bean_regexes` | List of regex patterns to limit which beans are queried |
+
+    For the full list of options, see the [JMX integration documentation](https://docs.datadoghq.com/integrations/java).
+  </Step>
+
+  <Step title="Discover available beans">
+    Before writing metric filters, explore the beans exposed by your target service. You can use any of the following tools:
+
+    - **VisualVM** — a graphical tool for inspecting JVM beans and their attributes.
+    - **JConsole** — included with the JDK, provides a GUI for browsing MBeans.
+    - **jmxterm** — a command-line tool for querying JMX endpoints.
+
+    To use `jmxterm`:
+
+    ```bash
+    curl -L https://github.com/jiaqi/jmxterm/releases/download/v1.0.1/jmxterm-1.0.1-uber.jar \
+      -o /tmp/jmxterm-1.0.1-uber.jar
+    java -jar /tmp/jmxterm-1.0.1-uber.jar -l localhost:<JMX_PORT>
+    ```
+
+    Once connected, list domains and beans:
+
+    ```
+    $> domains
+    $> beans
+    ```
+
+    Example output from an ActiveMQ instance:
+
+    ```
+    $> domains
+    #following domains are available
+    JMImplementation
+    com.sun.management
+    java.lang
+    org.apache.activemq
+
+    $> beans
+    #domain = org.apache.activemq:
+    org.apache.activemq:brokerName=localhost,destinationName=TEST.FOO,destinationType=Queue,type=Broker
+    [...]
+    ```
+
+    If the service requires extra JARs (for example, JBoss/WildFly uses `jboss-client.jar`), include them on the classpath:
+
+    ```bash
+    java -cp <PATH_WILDFLY>/bin/client/jboss-client.jar:/tmp/jmxterm-1.0.1-uber.jar \
+      org.cyclopsgroup.jmxterm.boot.CliMain \
+      --url service:jmx:remote+http://localhost:9990 -u datadog -p pa$$word
+    ```
+  </Step>
+
+  <Step title="Define metrics in metrics.yaml">
+    Edit `metrics.yaml` to define which beans and attributes to collect. Each entry under `jmx_metrics` specifies an `include` filter that matches beans by domain, bean properties, and attribute names.
+
+    The following example collects queue metrics from Apache ActiveMQ:
+
+    ```yaml
+    jmx_metrics:
+      - include:
+          domain: org.apache.activemq
+          destinationType: Queue
+          attribute:
+            AverageEnqueueTime:
+              alias: activemq.queue.avg_enqueue_time
+              metric_type: gauge
+            ConsumerCount:
+              alias: activemq.queue.consumer_count
+              metric_type: gauge
+    ```
+
+    Each attribute entry maps the JMX attribute name to a Datadog metric name (`alias`) and a metric type. Supported metric types are `gauge`, `rate`, `counter`, `histogram`, and `monotonic_count`.
+
+    For filter syntax details and more examples, see the [JMX integration filter documentation](https://docs.datadoghq.com/integrations/java/?tab=host#description-of-the-filters) and the [JMXFetch test cases](https://github.com/DataDog/jmxfetch/tree/master/src/test/resources).
+  </Step>
+
+  <Step title="Write tests">
+    Set up a Docker-based test environment in `tests/conftest.py`. The `dd_environment` fixture starts the service and signals when it's ready:
+
+    ```python
+    @pytest.fixture(scope="session")
+    def dd_environment():
+        compose_file = os.path.join(HERE, 'compose', 'docker-compose.yaml')
+        with docker_run(
+            compose_file,
+            conditions=[
+                CheckDockerLogs('broker', 'Monitored service is now ready'),
+            ],
+        ):
+            yield CHECK_CONFIG, {'use_jmx': True}
+    ```
+
+    Write an end-to-end test that verifies each expected metric is collected:
+
+    ```python
+    @pytest.mark.e2e
+    def test(dd_agent_check):
+        instance = {}
+        aggregator = dd_agent_check(instance)
+
+        for metric in ACTIVEMQ_E2E_METRICS + JVM_E2E_METRICS:
+            aggregator.assert_metric(metric)
+
+        aggregator.assert_all_metrics_covered()
+        aggregator.assert_metrics_using_metadata(get_metadata_metrics(), exclude=JVM_E2E_METRICS)
+    ```
+
+    For real working examples, see the ActiveMQ integration:
+    - [`dd_environment` fixture](https://github.com/DataDog/integrations-core/blob/master/activemq/tests/conftest.py)
+    - [E2E test](https://github.com/DataDog/integrations-core/blob/master/activemq/tests/test_check.py)
+  </Step>
+</Steps>
+
+## metrics.yaml filter reference
+
+Filters in `metrics.yaml` use `include` and `exclude` rules. JMXFetch evaluates each bean against all `include` rules, then checks whether it matches any `exclude` rule.
+
+### Include filters
+
+An `include` filter can match on:
+
+- `domain` — the bean domain (e.g. `org.apache.activemq`)
+- Bean property keys — any key-value pair in the bean's `ObjectName` (e.g. `destinationType: Queue`)
+- `attribute` — a map of attribute names to collection configuration
+
+### Exclude filters
+
+An `exclude` filter has the same structure as `include`, and can be used to narrow down results from a broad `include`:
+
+```yaml
+jmx_metrics:
+  - include:
+      domain: org.apache.activemq
+      attribute:
+        AverageEnqueueTime:
+          alias: activemq.queue.avg_enqueue_time
+          metric_type: gauge
+    exclude:
+      destinationType: Topic
+```
+
+### Example: collecting from multiple bean types
+
+```yaml
+jmx_metrics:
+  - include:
+      domain: org.apache.activemq
+      destinationType: Queue
+      attribute:
+        AverageEnqueueTime:
+          alias: activemq.queue.avg_enqueue_time
+          metric_type: gauge
+        ConsumerCount:
+          alias: activemq.queue.consumer_count
+          metric_type: gauge
+  - include:
+      domain: org.apache.activemq
+      destinationType: Topic
+      attribute:
+        AverageEnqueueTime:
+          alias: activemq.topic.avg_enqueue_time
+          metric_type: gauge
+        ConsumerCount:
+          alias: activemq.topic.consumer_count
+          metric_type: gauge
+```
+
+<Note>
+  The `collect_default_metrics: true` flag in `init_config` enables automatic collection of standard JVM metrics (heap memory, thread count, garbage collection, etc.) without any additional `metrics.yaml` entries. You can exclude JVM metrics from your own assertions by passing them to the `exclude` parameter of `assert_metrics_using_metadata`.
+</Note>

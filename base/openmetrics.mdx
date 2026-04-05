@@ -1,0 +1,198 @@
+---
+title: "OpenMetrics"
+description: "The OpenMetricsBaseCheckV2 base class for scraping Prometheus and OpenMetrics endpoints."
+---
+
+`OpenMetricsBaseCheckV2` is the standard base class for integrations that collect metrics from endpoints using the [OpenMetrics](https://openmetrics.io/) or [Prometheus](https://prometheus.io/docs/instrumenting/exposition_formats/) exposition format. This is the default for all new OpenMetrics-based checks and is Python 3 only.
+
+<Note>
+This is the v2 implementation. The original `OpenMetricsBaseCheck` is deprecated. New checks should always use `OpenMetricsBaseCheckV2`.
+</Note>
+
+## Subclassing
+
+To create an OpenMetrics-based check, subclass `OpenMetricsBaseCheckV2` and override `__init__` if you need custom configuration. Call the parent `__init__` first.
+
+```python
+from datadog_checks.base.checks.openmetrics.v2.base import OpenMetricsBaseCheckV2
+
+
+class MyServiceCheck(OpenMetricsBaseCheckV2):
+    __NAMESPACE__ = 'myservice'
+
+    def __init__(self, name, init_config, instances):
+        super(MyServiceCheck, self).__init__(name, init_config, instances)
+        # Add custom scrapers or modify scraper_configs here
+```
+
+A minimal instance configuration requires only `openmetrics_endpoint`, `namespace`, and `metrics`:
+
+```yaml
+instances:
+  - openmetrics_endpoint: http://localhost:9090/metrics
+    namespace: myservice
+    metrics:
+      - http_requests_total
+      - http_request_duration_seconds
+```
+
+## The `check` method
+
+You typically do not need to override `check`. The default implementation refreshes scrapers and calls `scraper.scrape()` for each configured endpoint:
+
+```python
+def check(self, _):
+    self.refresh_scrapers()
+
+    for endpoint, scraper in self.scrapers.items():
+        self.log.debug('Scraping OpenMetrics endpoint: %s', endpoint)
+
+        with self.adopt_namespace(scraper.namespace):
+            scraper.scrape()
+```
+
+## Configuring scrapers
+
+### `configure_scrapers()`
+
+Called once during initialization via `check_initializations`. For each entry in `self.scraper_configs`, this creates a scraper keyed by the `openmetrics_endpoint` URL. Override this method if you need to build scraper configurations dynamically.
+
+```python
+def configure_scrapers(self):
+    scrapers = {}
+
+    for config in self.scraper_configs:
+        endpoint = config.get('openmetrics_endpoint', '')
+        scrapers[endpoint] = self.create_scraper(config)
+
+    self.scrapers.clear()
+    self.scrapers.update(scrapers)
+```
+
+### `create_scraper(config)`
+
+Returns an `OpenMetricsScraper` instance for the given configuration dict. Override this method to return a custom scraper subclass:
+
+```python
+def create_scraper(self, config):
+    return MyCustomScraper(self, self.get_config_with_defaults(config))
+```
+
+The `get_config_with_defaults(config)` call merges the instance config with defaults returned by `get_default_config()`. Override `get_default_config()` to provide check-wide defaults:
+
+```python
+def get_default_config(self):
+    return {
+        'metrics': [
+            'my_metric_total',
+            'my_other_metric',
+        ]
+    }
+```
+
+## The scraper interface
+
+`OpenMetricsScraper` is responsible for connecting to the endpoint, parsing the exposition format, and submitting metrics.
+
+### `scrape()`
+
+The top-level method. Calls `send_requests()` to open the connection, then calls `consume_metrics()` to iterate and submit each metric:
+
+```python
+scraper.scrape()
+```
+
+### `consume_metrics()`
+
+Iterates over parsed metric families and applies transformers to produce Datadog metric submissions. You can override this in a custom scraper to add filtering or processing.
+
+### `parse_metrics()`
+
+Parses the raw response body from the OpenMetrics or Prometheus endpoint into metric family objects. The scraper handles both OpenMetrics and Prometheus text formats automatically.
+
+### `generate_sample_data(metric, family, label_joins)`
+
+Converts a single metric family into a sequence of `(sample, tags, hostname)` tuples. Override this to transform labels into tags in non-standard ways.
+
+### `set_dynamic_tags(*tags)`
+
+Adds tags to every metric submitted by this scraper, applied at scrape time:
+
+```python
+self.set_dynamic_tags('env:production', 'region:us-east-1')
+```
+
+On the check, calling `self.set_dynamic_tags(...)` propagates to all scrapers:
+
+```python
+class MyCheck(OpenMetricsBaseCheckV2):
+    def check(self, _):
+        self.set_dynamic_tags('env:' + self.instance.get('env', 'unknown'))
+        super().check(_)
+```
+
+### `submit_health_check()`
+
+Submits a service check for the endpoint's reachability, based on whether the HTTP request succeeded. This is called automatically inside `scrape()`.
+
+## Transformers
+
+Transformers define how each OpenMetrics metric type is converted into a Datadog metric. The built-in transformers cover:
+
+| OpenMetrics type | Transformer | Datadog metric type |
+|---|---|---|
+| `counter` | `counter` | `monotonic_count` |
+| `gauge` | `gauge` | `gauge` |
+| `histogram` | `histogram` | `gauge`, `count`, and histogram buckets |
+| `summary` | `rate` | `gauge` (quantiles) and `monotonic_count` (sum/count) |
+
+You can add custom transformers to a scraper to handle non-standard metric types or override default behavior:
+
+```python
+from datadog_checks.base.checks.openmetrics.v2.base import OpenMetricsBaseCheckV2
+
+
+class MyCheck(OpenMetricsBaseCheckV2):
+    def create_scraper(self, config):
+        scraper = super().create_scraper(config)
+        scraper.metric_transformer.add('my_custom_metric', self._transform_my_metric)
+        return scraper
+
+    def _transform_my_metric(self, metric, sample_data, runtime_data):
+        for sample, tags, hostname in sample_data:
+            self.gauge('my_metric.processed', sample.value * 1000, tags=tags, hostname=hostname)
+```
+
+## Instance configuration options
+
+Key configuration options for the `instances` section:
+
+<ParamField path="openmetrics_endpoint" type="str" required>
+  The URL of the metrics endpoint to scrape.
+</ParamField>
+<ParamField path="namespace" type="str" required>
+  The metric namespace prefix. All metrics are submitted as `<namespace>.<metric_name>`.
+</ParamField>
+<ParamField path="metrics" type="list[str | dict]" required>
+  The list of metrics to collect. Each entry is a metric name or a mapping from metric name to a custom Datadog name.
+</ParamField>
+<ParamField path="tags" type="list[str]">
+  Extra tags to add to all metrics from this instance.
+</ParamField>
+<ParamField path="timeout" type="float" default="10">
+  Connection and read timeout in seconds for each scrape request.
+</ParamField>
+<ParamField path="tls_verify" type="bool" default="True">
+  Whether to verify TLS certificates.
+</ParamField>
+<ParamField path="tls_ca_cert" type="str">
+  Path to a CA bundle for TLS verification.
+</ParamField>
+<ParamField path="username" type="str">
+  Username for HTTP Basic Authentication.
+</ParamField>
+<ParamField path="password" type="str">
+  Password for HTTP Basic Authentication.
+</ParamField>
+
+For the complete list of options, see the associated configuration templates for the `instances` and `init_config` sections.

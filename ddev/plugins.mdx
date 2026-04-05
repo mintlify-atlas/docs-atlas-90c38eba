@@ -1,0 +1,305 @@
+---
+title: "Plugins"
+description: "Reference for the ddev pytest plugin — fixtures, the environment manager, E2E markers, mock utilities, and how to define dd_environment for Docker, Vagrant, and Terraform environments."
+---
+
+The `datadog-checks-dev` package ships a pytest plugin that makes fixtures available globally and manages the lifecycle of E2E environments. It is loaded automatically whenever pytest runs inside an integration.
+
+## Style enforcement
+
+Setting `dd_check_style = true` in a check's `hatch.toml` enables two environments:
+
+- **`style`** — Checks formatting and errors if any issues are found. Run it with `ddev test -s <integration>`.
+- **`format_style`** — Formats code automatically, resolving the most common style issues. Run it with `ddev test -fs <integration>`.
+
+## pytest plugin
+
+### Agent stubs
+
+The stub fixtures reset their state automatically before each test.
+
+<AccordionGroup>
+  <Accordion title="aggregator">
+    Provides an `AggregatorStub` that records all metrics, events, service checks, and histograms submitted during a test.
+
+    ```python
+    def test_metrics(aggregator, dd_run_check):
+        check = AwesomeCheck('awesome', {}, [{'port': 8080}])
+        dd_run_check(check)
+        aggregator.assert_metric('awesome.requests', value=1)
+        aggregator.assert_all_metrics_covered()
+    ```
+  </Accordion>
+  <Accordion title="datadog_agent">
+    Provides a `DatadogAgentStub` that captures calls to Agent APIs such as `set_external_tags` and `emit_agent_telemetry`.
+  </Accordion>
+</AccordionGroup>
+
+### Check execution
+
+Most tests run checks via the `run` method of `AgentCheck`. Unlike calling `check()` directly, the `run` method does not propagate exceptions, so errors can be silently swallowed.
+
+Use the `dd_run_check` fixture to run a check while still propagating any exception:
+
+```python
+def test_metrics(aggregator, dd_run_check):
+    check = AwesomeCheck('awesome', {}, [{'port': 8080}])
+    dd_run_check(check)
+    ...
+```
+
+To strip the full traceback from an exception and assert only on its message, pass `extract_message=True`:
+
+```python
+def test_config(dd_run_check):
+    check = AwesomeCheck('awesome', {}, [{'port': 'foo'}])
+
+    with pytest.raises(Exception, match='^Option `port` must be an integer$'):
+        dd_run_check(check, extract_message=True)
+```
+
+### E2E fixtures
+
+#### dd_agent_check
+
+The `dd_agent_check` fixture runs an integration against a live Agent and returns a populated `AggregatorStub`. It accepts a single `dict` representing either a single instance or a full config with top-level keys `instances`, `init_config`, etc.
+
+This fixture can only be used in tests marked with `@pytest.mark.e2e`:
+
+```python
+@pytest.mark.e2e
+def test_e2e_metrics(dd_agent_check, instance):
+    aggregator = dd_agent_check(instance, rate=True)
+    aggregator.assert_metric('awesome.requests')
+    aggregator.assert_all_metrics_covered()
+```
+
+Internally, `dd_agent_check` wraps `ddev env check` and accepts the same options and flags.
+
+#### State persistence
+
+Sometimes you need to persist data produced during environment setup — such as a generated token — through the test and teardown phases.
+
+<AccordionGroup>
+  <Accordion title="dd_save_state">
+    Save any JSON-serializable object during environment setup:
+
+    ```python
+    dd_save_state('my_data', {'foo': 'bar'})
+    ```
+  </Accordion>
+  <Accordion title="dd_get_state">
+    Retrieve previously saved state during tests or teardown:
+
+    ```python
+    my_data = dd_get_state('my_data', default={})
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Mock HTTP response
+
+The `mock_http_response` fixture mocks all HTTP requests for the lifetime of a single test. This is useful for simulating endpoint responses without running a real server.
+
+```python
+def test_prometheus_metrics(mock_http_response):
+    mock_http_response(
+        """
+        # HELP go_memstats_alloc_bytes Number of bytes allocated and still in use.
+        # TYPE go_memstats_alloc_bytes gauge
+        go_memstats_alloc_bytes 6.396288e+06
+        """
+    )
+    ...
+```
+
+### Mocker
+
+The `mocker` fixture is provided by [pytest-mock](https://github.com/pytest-dev/pytest-mock). It automatically restores all mocks at the end of each test and is more ergonomic than stacking decorators or nested context managers.
+
+```python
+def test_foo(mocker):
+    mocker.patch('os.remove')
+    mocker.patch.object(os, 'listdir', autospec=True)
+    mocked_isfile = mocker.patch('os.path.isfile')
+```
+
+### Benchmarks
+
+The `benchmark` fixture is provided by [pytest-benchmark](https://github.com/ionelmc/pytest-benchmark) and uses the low-overhead `cProfile` module.
+
+```python
+def test_large_payload(benchmark, dd_run_check):
+    check = AwesomeCheck('awesome', {}, [instance])
+
+    # Run once to initialize.
+    dd_run_check(check)
+
+    benchmark(dd_run_check, check)
+```
+
+To enable benchmarks, add a `bench` environment in `hatch.toml`:
+
+```toml
+[envs.bench]
+```
+
+Run benchmarks with `ddev test -b <integration>`. Results are sorted by `tottime` (total time in the function, excluding sub-function calls). Standard test runs skip benchmark environments by default.
+
+---
+
+## Environment manager
+
+The `dd_environment_runner` fixture manages the communication bridge between E2E environments and the `ddev env` command group. You never use it directly — it runs automatically and acts upon a fixture named `dd_environment` that your integration defines.
+
+### Defining dd_environment
+
+Every integration that supports E2E testing must define a `dd_environment` fixture. It must:
+
+1. `yield` a single `dict` representing the default Agent configuration (a single instance, or a full config with `instances`, `init_config`, etc.). Optionally yield a second `dict` of [metadata](#environment-metadata).
+2. Place setup logic before the `yield` and teardown logic after it.
+3. Guard setup behind `DDEV_E2E_UP != false` and teardown behind `DDEV_E2E_DOWN != false`.
+
+```python
+@pytest.fixture(scope='session')
+def dd_environment():
+    try:
+        set_up_env()
+        yield some_default_config
+    finally:
+        tear_down_env()
+```
+
+`ddev env start` executes everything before the `yield`. `ddev env stop` executes everything after it.
+
+<Note>
+The provided Docker and Terraform utilities handle the `DDEV_E2E_UP` / `DDEV_E2E_DOWN` guards for you automatically.
+</Note>
+
+### Docker environments
+
+The `docker_run` utility starts services using docker-compose and handles the environment variable guards:
+
+```python
+from datadog_checks.dev import docker_run
+
+@pytest.fixture(scope='session')
+def dd_environment():
+    with docker_run(os.path.join(HERE, 'docker', 'compose.yaml')):
+        yield {
+            'instances': [{'host': 'localhost', 'port': 5432}]
+        }
+```
+
+### Vagrant environments
+
+For integrations that require full OS environments or system-level testing that cannot be containerized:
+
+```python
+@pytest.fixture(scope='session')
+def dd_environment():
+    yield {
+        'instances': [{'host': '%HOST%', 'port': 8080}]
+    }, {
+        'agent_type': 'vagrant',
+        'vagrant_box': 'generic/ubuntu2004',
+        'env': {
+            'MY_ENV_VAR': 'value'
+        },
+        'start_commands': [
+            'sudo apt-get update',
+            'sudo apt-get install -y some-package'
+        ],
+        'post_install_commands': [
+            'sudo systemctl start my-service'
+        ]
+    }
+```
+
+The `%HOST%` template variable is replaced at runtime with the VM's IP address (`172.30.1.5`).
+
+<Warning>
+Vagrant environments are not supported in CI environments due to virtualization constraints.
+</Warning>
+
+### Terraform environments
+
+The `terraform_run` utility creates services from a directory of Terraform files. Use this for services too complex for Docker (such as OpenStack) or for things Docker cannot provide (such as vSphere):
+
+```python
+from datadog_checks.dev.terraform import terraform_run
+
+@pytest.fixture(scope='session')
+def dd_environment():
+    with terraform_run(os.path.join(HERE, 'terraform')):
+        yield ...
+```
+
+<Note>
+Terraform E2E tests are not run in the public CI to avoid slowing down builds unnecessarily.
+</Note>
+
+### Environment metadata
+
+You can pass a second `dict` alongside the config when yielding from `dd_environment` to provide metadata that controls how the environment is managed.
+
+<AccordionGroup>
+  <Accordion title="env_type">
+    The interface type used to interact with the Agent. Supported values: `docker` (default), `vagrant`, `local`.
+  </Accordion>
+  <Accordion title="env_vars">
+    A `dict` of environment variables and their values that will be present when the Agent starts.
+
+    ```python
+    yield config, {'env_vars': {'DD_HOSTNAME': 'test-host'}}
+    ```
+  </Accordion>
+  <Accordion title="docker_volumes">
+    A `list` of strings representing [Docker volume mounts](https://docs.docker.com/storage/volumes/) when `env_type` is `docker`.
+
+    ```python
+    yield config, {
+        'docker_volumes': ['/local/path:/agent/container/path:ro']
+    }
+    ```
+  </Accordion>
+  <Accordion title="docker_platform">
+    Container architecture when `env_type` is `docker`. Supported values: `linux` (default), `windows`.
+  </Accordion>
+  <Accordion title="logs_config">
+    A `list` of log configs used by the Logs Agent. Use the `mount_logs` parameter of `docker_run` instead of setting this directly.
+  </Accordion>
+</AccordionGroup>
+
+### Log collection in E2E Docker environments
+
+<Steps>
+  <Step title="Enable log mounting">
+    Pass `mount_logs=True` to `docker_run`. This uses the log examples defined in the integration's config spec:
+
+    ```yaml
+    - template: logs
+      example:
+      - type: file
+        path: /var/log/apache2/access.log
+        source: apache
+        service: apache
+      - type: file
+        path: /var/log/apache2/error.log
+        source: apache
+        service: apache
+    ```
+  </Step>
+  <Step title="Reference log files in compose">
+    All mounted log files are available as environment variables `DD_LOG_<INDEX>` (1-indexed):
+
+    ```yaml
+    volumes:
+      - ${DD_LOG_1}:/usr/local/apache2/logs/access_log
+      - ${DD_LOG_2}:/usr/local/apache2/logs/error_log
+    ```
+  </Step>
+  <Step title="Configure a custom log URL (optional)">
+    Set `log_url` in the active [organization config](/ddev/configuration#organization-configuration) to send logs to a custom endpoint.
+  </Step>
+</Steps>

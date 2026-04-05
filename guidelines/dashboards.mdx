@@ -1,0 +1,183 @@
+---
+title: "Dashboards"
+description: "Guidelines for contributing integration preset dashboards, including how to export, validate, and structure dashboard JSON files."
+---
+
+Datadog dashboards let you efficiently monitor your infrastructure and integrations by displaying and tracking key metrics. When you contribute an integration, you can include a preset dashboard that users see immediately after installing the tile.
+
+## Contributing a preset dashboard
+
+<Steps>
+  <Step title="Create the dashboard in the Datadog UI">
+    Build and refine your dashboard in the Datadog UI. Follow the [best practices](#best-practices) below before exporting.
+  </Step>
+  <Step title="Configure ddev credentials">
+    Set an `api_key` and `app_key` for the org that contains the dashboard in your `ddev` configuration:
+
+    ```bash
+    ddev config set org.api_key <API_KEY>
+    ddev config set org.app_key <APP_KEY>
+    ```
+  </Step>
+  <Step title="Export the dashboard payload">
+    Run the export command with the dashboard URL and the integration name:
+
+    ```bash
+    ddev meta dash export <URL_OF_DASHBOARD> <INTEGRATION>
+    ```
+
+    <Note>
+      If the dashboard is for a contributor-maintained integration in the `integrations-extras` repo, use `ddev --extras meta ...` instead of `ddev meta ...`.
+    </Note>
+
+    The command does two things:
+
+    - Adds the dashboard definition to the integration's `manifest.json` file.
+    - Writes the dashboard JSON payload to `/assets/dashboards/<DASHBOARD_TITLE>.json`.
+  </Step>
+  <Step title="Commit and open a PR">
+    Commit the updated `manifest.json` and the new dashboard JSON file, then open a pull request.
+  </Step>
+  <Step title="Verify the preset dashboard">
+    Once your PR is merged and synced to production, find your dashboard on the Dashboard List page. The integration tile must be **Installed** for the preset dashboard to appear in the list.
+
+    Check that logos render correctly on the Dashboard List page and inside the preset dashboard.
+  </Step>
+</Steps>
+
+<Note>
+The dashboard is available at `/dash/integration/<DASHBOARD_KEY>` in each region, where `<DASHBOARD_KEY>` is the value in the integration's `manifest.json`. Use this path when linking to another dashboard from within your dashboard.
+</Note>
+
+## Best practices
+
+### Why best practices matter
+
+A dashboard that follows best practices helps users consume data quickly. Guidelines reduce friction when figuring out where to find specific information or how to interpret data. They also give dashboard authors a clear starting point when creating a new dashboard.
+
+### Visual style checklist
+
+Review each item before submitting your dashboard PR:
+
+- An attention-grabbing **About** section with the integration logo, concise copy, useful links, and a clear typography hierarchy.
+- A brief, annotated **Overview** section with the most important data at the top.
+- Simple graph titles and title-case group names.
+- Near-symmetrical layout in high density mode.
+- Well-formatted, concise notes explaining the value or purpose of data in each group. Use the presets **caption**, **annotation**, or **header**, or a custom combination. Avoid the smallest font size for long notes or notes with complex formatting such as bulleted lists or code blocks.
+- All widgets placed within a group based on thematic organization — not directly on the dashboard background.
+- Query value widgets with a timeseries background (for example, **Bars**) instead of a blank background.
+- Semantic formatting or custom red/green/yellow text formatting for visualizations with obvious thresholds or zones.
+- Color coordination between group headers, notes, and graphs within each group.
+- Legends on every graph, using aliases so they are easy to read. Automatic legend mode is a good option — it hides legends when space is tight and shows them when there is room.
+- Adjacent graphs with aligned x-axes. If one graph shows a legend and the adjacent one does not, the x-axes will not align.
+- Display types matched to the metric type for timeseries:
+
+  | Metric type | Display type |
+  | --- | --- |
+  | Volume (e.g. number of connections) | `area` |
+  | Counts (e.g. number of errors) | `bars` |
+  | Multiple groups or default | `lines` |
+
+## Standard groups
+
+Every preset dashboard should include the following groups.
+
+<AccordionGroup>
+  <Accordion title="About group (required)">
+    Include an **About** group for the integration containing:
+
+    - A brief description and helpful links.
+    - An **Image** widget using the **Large** variant of the integration logo as the first element. Link the image to `static/images/logos/<your-logo>.svg`. Find the correct path in the [DRUIDS logo gallery](https://druids.datadoghq.com/logos/logo-gallery) by clicking the relevant logo and selecting the **Large** tab. Include both light and dark variants so the logo displays correctly for both themes.
+
+    The **About** section should contain content, not data. Avoid making the **About** section full width. Consider copying the **About** content into the hovercard that appears when hovering over the dashboard title.
+  </Accordion>
+  <Accordion title="Overview group (required)">
+    Include an **Overview** group at the top of the dashboard containing:
+
+    - Service checks (e.g. liveness or readiness checks).
+    - A few of the most important metrics.
+    - A monitor summary if you have pre-existing monitors for the integration.
+
+    The **Overview** section should contain data, not static content.
+  </Accordion>
+  <Accordion title="Logs group (when applicable)">
+    If log collection is enabled, include a **Logs** group with:
+
+    - A timeseries widget showing a bar graph of logs by status over time.
+    - A log stream showing logs with **Error** or **Critical** status.
+  </Accordion>
+</AccordionGroup>
+
+<Tip>
+Consider turning groups that appear repeatedly across dashboards into powerpacks so you can insert the full group with correct formatting in a few clicks, rather than recreating the same widgets from scratch each time.
+</Tip>
+
+## Creating a new dashboard
+
+<Steps>
+  <Step title="Select the dashboard type">
+    After selecting **New Dashboard**, choose from **Dashboard**, **Screenboard**, or **Timeboard**. **Dashboard** is recommended.
+  </Step>
+  <Step title="Add the integration logo">
+    The integration logo appears automatically in the dashboard header if the icon exists in the [DRUIDS logo gallery](https://druids.datadoghq.com/logos/logo-gallery) and the `integration_id` matches the icon name.
+  </Step>
+  <Step title="Name the dashboard">
+    Include the integration name in the dashboard title (e.g. `Elasticsearch Overview Dashboard`).
+
+    <Warning>
+      Avoid hyphens in the dashboard title. The dashboard URL is generated from the title, and hyphens can cause URL issues.
+    </Warning>
+  </Step>
+</Steps>
+
+## Design guidelines
+
+### Grouping metrics
+
+Research the metrics supported by the integration and group them into relevant categories. Groups with the most important metrics should appear closer to the top. Some approaches:
+
+- **Macro to micro** — For a database dashboard, you could group node metrics first, index metrics next, then shard metrics.
+- **Upstream to downstream** — For a data streams dashboard, you could group producer metrics, broker metrics, then consumer metrics.
+- **By actionable insight** — Group metrics that lead to the same action together (e.g. all indexing metrics that reveal which indexes to optimize in one group, resource utilization metrics that inform allocation decisions in another).
+
+### Template variables
+
+Template variables dynamically filter one or more widgets. They must be universal and accessible by any user or account using the monitored service. Ensure all relevant graphs respond to the relevant template variable filters.
+
+| Integration technology | Typical template variable |
+| --- | --- |
+| Database | Shards |
+| Data streaming | Consumer |
+| ML model serving | Model |
+
+<Tip>
+Adding `*=scope` as a template variable is useful because users can access all of their own tags through it.
+</Tip>
+
+### Widget layout
+
+- Timeseries widgets should be at least 4 columns wide to avoid appearing squashed on smaller displays.
+- Stream widgets should be at least 6 columns wide (half the dashboard width) for readability. Place them at the end of the dashboard so they do not trap scrolling. Put stream widgets in their own group so they can be collapsed. Add an event stream only if the monitored service reports events — use `sources:service_name`.
+- Check the dashboard at both 1280px and 2560px wide. The most common screen widths are 1920, 1680, 1440, 2560, and 1280px, which together account for more than half of all dashboard page views.
+
+<Tip>
+If your monitor is not large enough for high density mode, use browser zoom controls to zoom out and simulate the wider view.
+</Tip>
+
+### Copy guidelines
+
+- Write concise graph titles that start with the most important information.
+- Avoid phrases like "number of" and do not include the integration name in every widget title.
+
+  | Concise (good) | Verbose (avoid) |
+  | --- | --- |
+  | Events per node | Number of Kubernetes events per node |
+  | Pending tasks: [$node_name] | Total number of pending tasks in [$node_name] |
+  | Read/write operations | Number of read/write operations |
+  | Connections to server - rate | Rate of connections to server |
+  | Load | Memcached Load |
+
+- Do not repeat the group title or integration name in every widget within a group.
+- Always alias formulas.
+- Group titles should be title case. Widget titles should be sentence case.
+- Graph titles should summarize the queried metric. Do not include the unit in the title — unit types are displayed automatically from metadata, unless the query calculation represents a different unit type.

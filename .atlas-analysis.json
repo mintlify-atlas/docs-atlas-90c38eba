@@ -1,0 +1,125 @@
+{
+  "projectType": "framework",
+  "projectName": "Datadog Integrations Core",
+  "projectDescription": "An open-source framework and CLI toolchain for developing, testing, and maintaining official Datadog Agent integrations (Checks).",
+  "theme": "aspen",
+  "primaryColor": "#242b2c",
+  "lightColor": "#6a6a6d",
+  "darkColor": "#ebeaea",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "setup",
+              "testing",
+              "e2e"
+            ]
+          },
+          {
+            "group": "Base Package",
+            "pages": [
+              "base/overview",
+              "base/metrics-and-events",
+              "base/http",
+              "base/openmetrics",
+              "base/databases",
+              "base/tls",
+              "base/persistent-cache",
+              "base/api"
+            ]
+          },
+          {
+            "group": "Dev Tooling (ddev)",
+            "pages": [
+              "ddev/overview",
+              "ddev/configuration",
+              "ddev/cli",
+              "ddev/plugins",
+              "ddev/multirepo"
+            ]
+          },
+          {
+            "group": "Guidelines",
+            "pages": [
+              "guidelines/pull-requests",
+              "guidelines/conventions",
+              "guidelines/style",
+              "guidelines/dashboards"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Tutorials & Architecture",
+        "groups": [
+          {
+            "group": "Tutorials",
+            "pages": [
+              "tutorials/jmx",
+              "tutorials/snmp",
+              "tutorials/logs"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/snmp",
+              "architecture/vsphere",
+              "architecture/ibm-i",
+              "architecture/windows-event-log"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/faq",
+              "reference/changelog"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "AgentCheck base class providing a unified API for submitting metrics, events, service checks, and logs to Datadog",
+    "HTTP wrapper with automatic TLS, auth, and proxy configuration parsed from YAML config",
+    "OpenMetrics/Prometheus scraping framework (v2) for collecting CNCF-format metrics",
+    "Database query framework with connection pooling and query execution helpers",
+    "ddev CLI for running tests, managing E2E environments, validating configs, and releasing integrations",
+    "Configuration model code generation from spec.yaml files",
+    "pytest plugin and test stubs (AggregatorStub, DatadogAgentStub) for unit and integration testing",
+    "End-to-end testing against live Datadog Agent in Docker via ddev env commands",
+    "400+ official integrations covering databases, cloud platforms, networking, security, and observability tools",
+    "Changelog management tooling integrated with semantic versioning and CI"
+  ],
+  "publicApiSurface": [
+    "AgentCheck.gauge(name, value, tags, hostname, device_name, raw)",
+    "AgentCheck.count(name, value, tags, hostname, device_name, raw)",
+    "AgentCheck.monotonic_count(name, value, tags, hostname, device_name, raw)",
+    "AgentCheck.rate(name, value, tags, hostname, device_name, raw)",
+    "AgentCheck.histogram(name, value, tags, hostname, device_name, raw)",
+    "AgentCheck.historate(name, value, tags, hostname, device_name, raw)",
+    "AgentCheck.service_check(name, status, tags, hostname, message, raw)",
+    "AgentCheck.event(event_dict)",
+    "AgentCheck.set_metadata(name, value, **kwargs)",
+    "AgentCheck.read_persistent_cache(key)",
+    "AgentCheck.write_persistent_cache(key, value)",
+    "AgentCheck.send_log(log, cursor)",
+    "AgentCheck.warning(warning_message, *args, **kwargs)",
+    "AgentCheck.http (RequestsWrapper)",
+    "OpenMetricsBaseCheckV2.configure_scrapers()",
+    "OpenMetricsBaseCheckV2.create_scraper(config)",
+    "ddev test <INTEGRATION>",
+    "ddev env start <INTEGRATION> <ENV>",
+    "ddev env test <INTEGRATION> <ENV>",
+    "ddev env stop <INTEGRATION> <ENV>",
+    "ddev release changelog new <TYPE> <INTEGRATION> -m <MESSAGE>",
+    "ddev validate config -s <INTEGRATION>",
+    "ddev validate models -s <INTEGRATION>"
+  ]
+}

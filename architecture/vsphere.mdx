@@ -1,0 +1,224 @@
+---
+title: "vSphere Integration Architecture"
+description: "How the Datadog vSphere integration connects to vCenter, collects realtime and historical metrics, applies resource filtering, and maps vSphere tags to Datadog tags."
+---
+
+## Product overview
+
+vSphere is a VMware suite for managing on-premise virtualized infrastructure. Physical machines running VMware ESXi (ESXi Hosts) can spin up and migrate Virtual Machines. The vCenter server provides the central control plane — a web UI and API — over all ESXi hosts.
+
+### Key terminology
+
+| Term | Description |
+|------|-------------|
+| **vCenter server** | The main control machine for ESXi hosts. Provides both a web UI and a REST/SOAP API. |
+| **vCSA** | vCenter Server Appliance — a vCenter that runs inside a dedicated Linux machine. |
+| **ESXi host** | A physical machine running the ESXi bare-metal hypervisor. |
+| **VM** | A virtual machine instance. Datadog calls both ESXi hosts and VMs "hosts". |
+| **Datacenter** | A logical grouping of resources within a single vCenter server. |
+| **Datastore** | A virtual concept representing data storage. Can be an NFS mount, disk, or other media, often shared between multiple ESXi hosts. |
+| **Cluster** | A logical grouping of ESXi hosts for resource pooling. VMs are placed on a host within the cluster automatically. |
+| **Tags / Attributes** | Additional metadata attachable to any vSphere resource. Tags are the newer mechanism; attributes are deprecated. |
+
+## Check architecture
+
+The Datadog vSphere integration runs as a **single Agent instance** that pulls all data from a single vCenter endpoint. Because the Agent cannot run directly on Photon OS (the base OS used by ESXi and vCSA), you typically run the Agent inside a dedicated VM within the vSphere infrastructure.
+
+```
+┌───────────────────────────────────────────────────────┐
+│  vSphere Infrastructure                               │
+│                                                       │
+│  ┌──────────────┐    vCenter API    ┌──────────────┐  │
+│  │ Datadog      │◀─────────────────▶│ vCenter      │  │
+│  │ Agent (VM)   │                   │ Server       │  │
+│  └──────────────┘                   └──────┬───────┘  │
+│                                            │          │
+│                          ┌─────────────────┼────────┐ │
+│                          │                 │        │ │
+│                   ┌──────▼──┐       ┌──────▼──┐     │ │
+│                   │ ESXi    │       │ ESXi    │     │ │
+│                   │ Host 1  │       │ Host 2  │     │ │
+│                   └────┬────┘       └────┬────┘     │ │
+│                        │ VMs            │ VMs       │ │
+│                   ┌────▼────┐       ┌───▼─────┐    │ │
+│                   │ VM  VM  │       │ VM  VM  │    │ │
+│                   └─────────┘       └─────────┘    │ │
+│                                                    │ │
+└────────────────────────────────────────────────────┘─┘
+```
+
+### Minimal configuration
+
+```yaml
+init_config:
+instances:
+  - host: <VCENTER_FQDN_OR_IP>
+    username: <USERNAME>
+    password: <PASSWORD>
+    use_legacy_check_version: false
+    empty_default_hostname: true
+```
+
+<AccordionGroup>
+  <Accordion title="use_legacy_check_version">
+    A backward-compatibility flag that must always be set to `false`. When `true`, the Agent uses an older, deprecated version of the vSphere integration. This flag will be removed in a future release.
+  </Accordion>
+  <Accordion title="empty_default_hostname">
+    An Agent-level field that allows submitting metrics without an explicit host tag. The vSphere integration requires this for metrics like `vsphere.vm.count` that should not carry a host tag. Without it, the Datadog backend would attach all host tags (such as `vsphere_type:vm`) to the count metric, making it nearly impossible to use.
+  </Accordion>
+</AccordionGroup>
+
+## Metric collection pipeline
+
+### Realtime vs. historical metrics
+
+vSphere exposes two categories of metrics, and the distinction has a major impact on collection performance.
+
+<Tabs>
+  <Tab title="Realtime">
+    Each ESXi host stores a data point for every metric — for itself and every VM it hosts — every **20 seconds**. These data points are retained for up to one hour.
+
+    - Applies to: VMs and ESXi hosts.
+    - Collected by: querying vCenter, which proxies to each ESXi host.
+    - Performance: fast.
+  </Tab>
+  <Tab title="Historical">
+    The vCenter server aggregates data from all ESXi hosts, applies rollup functions, and stores the results in its own database.
+
+    - Applies to: Datastores, ClusterComputeResources, Datacenters, and other resource types not hosted on individual ESXi hosts.
+    - Performance: **significantly slower** than realtime collection.
+  </Tab>
+</Tabs>
+
+<Warning>
+  Historical metric collection can take up to 10 minutes in large environments when all resource types are collected in a single check instance. Use two separate check instances — one for realtime, one for historical — to prevent slow historical collection from affecting realtime metric rates.
+</Warning>
+
+#### Recommended two-instance setup
+
+```yaml
+instances:
+  - host: <VCENTER_HOST>
+    username: <USERNAME>
+    password: <PASSWORD>
+    use_legacy_check_version: false
+    empty_default_hostname: true
+    collection_type: realtime   # VMs and ESXi hosts
+
+  - host: <VCENTER_HOST>
+    username: <USERNAME>
+    password: <PASSWORD>
+    use_legacy_check_version: false
+    empty_default_hostname: true
+    collection_type: historical  # Datastores, Clusters, Datacenters
+```
+
+### Collection levels
+
+vSphere metrics each have a defined **collection level** (1–4) that determines which metrics are available. By default, only level-1 metrics are collected. You can raise the level in the integration configuration, but higher levels return substantially more data and increase vCenter load.
+
+## Tag collection and mapping
+
+vSphere supports two forms of resource metadata: **tags** (modern) and **attributes** (deprecated). Both can be mapped to Datadog tags.
+
+The vSphere integration maps these to Datadog host tags, allowing you to filter and group your vSphere resources in Datadog dashboards and monitors just as you would with cloud provider tags.
+
+### Instance tags (per-metric dimension)
+
+Each vSphere metric has up to three dimensions:
+
+1. The resource the metric applies to (e.g., a VM named `web-01`).
+2. The metric name (e.g., `cpu.usage`).
+3. An optional additional dimension called the **instance tag** (e.g., CPU core ID).
+
+Instance tags are **not collected by default** because they can significantly increase metric cardinality in large environments. Enable them selectively per metric using `collect_per_instance_filters`:
+
+```yaml
+collect_per_instance_filters:
+  vm:
+    - cpu\.usage\..*
+```
+
+<Note>
+  When fetching metrics with the instance tag enabled, vSphere only provides the raw value of the instance tag — not a human-readable key. For example, for `cpu.usage` with per-core breakdowns, the integration uses a hardcoded mapping to identify what each instance value represents.
+</Note>
+
+## Resource filtering
+
+The vSphere integration provides two independent filtering mechanisms to reduce vCenter load and control which resources and metrics you pay for.
+
+### Metric filters
+
+Metric filters use regular expressions to select which metrics are fetched for each resource type:
+
+```yaml
+metric_filters:
+  vm:
+    - cpu\..*
+    - mem\..*
+  host:
+    - WHATEVER     # Matches nothing — effectively disables host metrics
+  datacenter:
+    - .*           # Collects all datacenter metrics
+```
+
+### Resource filters
+
+Resource filters exclude specific vSphere resources from collection based on a resource property. The supported properties are:
+
+| Property | Applies to | Description |
+|----------|-----------|-------------|
+| `name` | All resources | The name of the resource as defined in vCenter. |
+| `inventory_path` | All resources | The full path in the inventory tree, e.g. `/my.datacenter.local/vm/staging/myservice/vm_name`. |
+| `tag` | All resources | Filters by attached vSphere tag. |
+| `attribute` | All resources | Filters by attached vSphere attribute (deprecated). |
+| `hostname` | VMs only | The ESXi host where the VM is running. |
+| `guest_hostname` | VMs only | The OS hostname reported from inside the VM (requires VMware Tools). |
+
+```yaml
+resource_filters:
+  - resource: vm
+    property: name
+    patterns:
+      - <VM_REGEX_1>
+      - <VM_REGEX_2>
+  - resource: vm
+    property: hostname
+    patterns:
+      - <HOSTNAME_REGEX>
+  - resource: vm
+    property: tag
+    type: blacklist
+    patterns:
+      - '^env:staging$'
+  - resource: vm
+    property: tag
+    type: whitelist   # default type
+    patterns:
+      - '^env:.*$'
+  - resource: vm
+    property: guest_hostname
+    patterns:
+      - <GUEST_HOSTNAME_REGEX>
+  - resource: host
+    property: inventory_path
+    patterns:
+      - <INVENTORY_PATH_REGEX>
+```
+
+## Performance considerations
+
+<AccordionGroup>
+  <Accordion title="Separate realtime and historical collection">
+    Always use two check instances — one with `collection_type: realtime` and one with `collection_type: historical`. Historical collection can block for several minutes in large environments, which would delay realtime metrics if both types share an instance.
+  </Accordion>
+  <Accordion title="Use resource filters to reduce vCenter query load">
+    Filtering reduces the number of objects the integration queries in vCenter. This is especially important for large vSphere environments (hundreds of VMs or ESXi hosts) where unconstrained collection can cause check runs exceeding 10 minutes.
+  </Accordion>
+  <Accordion title="Minimize instance tag collection">
+    The `collect_per_instance_filters` option can dramatically increase metric count. Only enable it for specific metrics where per-dimension breakdowns provide genuine operational value.
+  </Accordion>
+  <Accordion title="Collection level trade-offs">
+    Higher collection levels expose more metrics but increase the load on vCenter and the volume of data submitted to Datadog. Start at level 1 and raise incrementally only for metrics you actively use.
+  </Accordion>
+</AccordionGroup>

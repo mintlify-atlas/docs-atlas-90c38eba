@@ -1,0 +1,315 @@
+---
+title: "Metrics, Events, and Service Checks"
+description: "All metric submission types, service checks, events, and namespace behavior in the Datadog base check."
+---
+
+The `AgentCheck` base class exposes methods for submitting every Datadog metric type, service checks, and events. All submission methods respect the `__NAMESPACE__` prefix unless you pass `raw=True`.
+
+## Metric types
+
+### Gauge
+
+A gauge represents a snapshot of a value at a point in time. Use it for measurements that can go up or down, such as available memory or disk space.
+
+```python
+self.gauge('memory.available', 1024.0, tags=['host:web-01'])
+```
+
+<ParamField path="name" type="str" required>
+  The metric name. Prefixed with `__NAMESPACE__` unless `raw=True`.
+</ParamField>
+<ParamField path="value" type="float" required>
+  The current value to record.
+</ParamField>
+<ParamField path="tags" type="list[str]">
+  A list of tags in `key:value` format to associate with this metric.
+</ParamField>
+<ParamField path="hostname" type="str">
+  The hostname to associate with the metric. Defaults to the current host.
+</ParamField>
+<ParamField path="device_name" type="str">
+  Deprecated. Add a `device:<name>` tag to `tags` instead.
+</ParamField>
+<ParamField path="raw" type="bool" default="False">
+  When `True`, the `__NAMESPACE__` prefix is not applied.
+</ParamField>
+
+---
+
+### Count
+
+A count tracks the total number of event occurrences in one interval. Unlike monotonic count, the value can increase or decrease between submissions.
+
+```python
+self.count('requests.total', 500, tags=['endpoint:/api/v1'])
+```
+
+<ParamField path="name" type="str" required>
+  The metric name.
+</ParamField>
+<ParamField path="value" type="float" required>
+  The total count for this interval.
+</ParamField>
+<ParamField path="tags" type="list[str]">
+  Tags to associate with this metric.
+</ParamField>
+<ParamField path="hostname" type="str">
+  The hostname. Defaults to the current host.
+</ParamField>
+<ParamField path="device_name" type="str">
+  Deprecated. Use a `device:<name>` tag instead.
+</ParamField>
+<ParamField path="raw" type="bool" default="False">
+  Bypass the namespace prefix when `True`.
+</ParamField>
+
+---
+
+### Monotonic count
+
+A monotonic count tracks a value that only increases, such as a cumulative counter. The Agent computes the delta between submissions and stores the count for the interval.
+
+```python
+self.monotonic_count('bytes.sent', 1048576, tags=['interface:eth0'])
+```
+
+<ParamField path="name" type="str" required>
+  The metric name.
+</ParamField>
+<ParamField path="value" type="float" required>
+  The current cumulative value. Must only increase.
+</ParamField>
+<ParamField path="tags" type="list[str]">
+  Tags to associate with this metric.
+</ParamField>
+<ParamField path="hostname" type="str">
+  The hostname. Defaults to the current host.
+</ParamField>
+<ParamField path="device_name" type="str">
+  Deprecated. Use a `device:<name>` tag instead.
+</ParamField>
+<ParamField path="raw" type="bool" default="False">
+  Bypass the namespace prefix when `True`.
+</ParamField>
+<ParamField path="flush_first_value" type="bool" default="False">
+  When `True`, the first sampled value is flushed to the Agent. By default, the first submission only establishes the baseline.
+</ParamField>
+
+---
+
+### Rate
+
+A rate represents the number of event occurrences per second in one interval. Use it to express frequency, such as requests per second.
+
+```python
+self.rate('connections.per_second', 42.0, tags=['service:postgres'])
+```
+
+<ParamField path="name" type="str" required>
+  The metric name.
+</ParamField>
+<ParamField path="value" type="float" required>
+  The raw count value. The Agent divides by the interval to compute the per-second rate.
+</ParamField>
+<ParamField path="tags" type="list[str]">
+  Tags to associate with this metric.
+</ParamField>
+<ParamField path="hostname" type="str">
+  The hostname. Defaults to the current host.
+</ParamField>
+<ParamField path="device_name" type="str">
+  Deprecated. Use a `device:<name>` tag instead.
+</ParamField>
+<ParamField path="raw" type="bool" default="False">
+  Bypass the namespace prefix when `True`.
+</ParamField>
+
+---
+
+### Histogram
+
+A histogram calculates the statistical distribution of a set of values on the Agent side within one interval. It generates multiple metrics: `.avg`, `.count`, `.median`, `.95percentile`, and `.max`.
+
+```python
+self.histogram('query.duration_ms', 45.3, tags=['query:select_users'])
+```
+
+<ParamField path="name" type="str" required>
+  The metric name. The Agent appends suffixes like `.avg`, `.95percentile`, etc.
+</ParamField>
+<ParamField path="value" type="float" required>
+  A single observation to include in the distribution.
+</ParamField>
+<ParamField path="tags" type="list[str]">
+  Tags to associate with this metric.
+</ParamField>
+<ParamField path="hostname" type="str">
+  The hostname. Defaults to the current host.
+</ParamField>
+<ParamField path="device_name" type="str">
+  Deprecated. Use a `device:<name>` tag instead.
+</ParamField>
+<ParamField path="raw" type="bool" default="False">
+  Bypass the namespace prefix when `True`.
+</ParamField>
+
+---
+
+### Historate
+
+Similar to a histogram, but the distribution is based on rate values rather than raw values. Use it when the underlying data is a counter and you want a distribution of its rate.
+
+```python
+self.historate('cache.hits_per_second', 1200, tags=['cache:redis'])
+```
+
+<ParamField path="name" type="str" required>
+  The metric name.
+</ParamField>
+<ParamField path="value" type="float" required>
+  A single observation to include in the distribution.
+</ParamField>
+<ParamField path="tags" type="list[str]">
+  Tags to associate with this metric.
+</ParamField>
+<ParamField path="hostname" type="str">
+  The hostname. Defaults to the current host.
+</ParamField>
+<ParamField path="device_name" type="str">
+  Deprecated. Use a `device:<name>` tag instead.
+</ParamField>
+<ParamField path="raw" type="bool" default="False">
+  Bypass the namespace prefix when `True`.
+</ParamField>
+
+---
+
+## Service checks
+
+A service check reports the uptime status of a service. The status is one of four integer constants defined on `AgentCheck`:
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `AgentCheck.OK` | `0` | The service is functioning normally. |
+| `AgentCheck.WARNING` | `1` | The service is degraded or may fail soon. |
+| `AgentCheck.CRITICAL` | `2` | The service is down or unresponsive. |
+| `AgentCheck.UNKNOWN` | `3` | The service status cannot be determined. |
+
+```python
+from datadog_checks.base import AgentCheck
+
+
+class MyCheck(AgentCheck):
+    __NAMESPACE__ = 'mycheck'
+
+    def check(self, instance):
+        try:
+            response = self.http.get(instance['url'])
+            response.raise_for_status()
+            self.service_check('can_connect', AgentCheck.OK)
+        except Exception as e:
+            self.service_check(
+                'can_connect',
+                AgentCheck.CRITICAL,
+                message=str(e),
+            )
+```
+
+<ParamField path="name" type="str" required>
+  The service check name. Prefixed with `__NAMESPACE__` unless `raw=True`.
+</ParamField>
+<ParamField path="status" type="int" required>
+  One of `AgentCheck.OK` (0), `AgentCheck.WARNING` (1), `AgentCheck.CRITICAL` (2), or `AgentCheck.UNKNOWN` (3).
+</ParamField>
+<ParamField path="tags" type="list[str]">
+  Tags to associate with this service check.
+</ParamField>
+<ParamField path="hostname" type="str">
+  The hostname. Defaults to the current host.
+</ParamField>
+<ParamField path="message" type="str">
+  A human-readable description of why this status occurred.
+</ParamField>
+<ParamField path="raw" type="bool" default="False">
+  Bypass the namespace prefix when `True`.
+</ParamField>
+
+<Warning>
+When building new checks, avoid submitting service checks. Checks that already submit service checks will continue to do so, but this method is softly deprecated for new integrations.
+</Warning>
+
+---
+
+## Events
+
+Events are informational messages about your system that appear in the Datadog Events stream. You can build monitors on them.
+
+```python
+self.event({
+    'timestamp': int(time.time()),
+    'event_type': 'deployment',
+    'msg_title': 'Service deployed',
+    'msg_text': 'Version 2.3.1 deployed to production.',
+    'alert_type': 'info',
+    'tags': ['service:webapp', 'env:production'],
+})
+```
+
+The `event` method accepts a dictionary with the following keys:
+
+<ParamField path="timestamp" type="int" required>
+  Unix epoch timestamp for the event.
+</ParamField>
+<ParamField path="event_type" type="str" required>
+  The event name.
+</ParamField>
+<ParamField path="msg_title" type="str" required>
+  The title of the event.
+</ParamField>
+<ParamField path="msg_text" type="str" required>
+  The text body of the event.
+</ParamField>
+<ParamField path="aggregation_key" type="str">
+  A key used to aggregate related events together.
+</ParamField>
+<ParamField path="alert_type" type="str" default="info">
+  One of `'error'`, `'warning'`, `'success'`, or `'info'`.
+</ParamField>
+<ParamField path="source_type_name" type="str">
+  The source type name for the event.
+</ParamField>
+<ParamField path="host" type="str">
+  The name of the host associated with the event.
+</ParamField>
+<ParamField path="tags" type="list[str]">
+  Tags to associate with the event.
+</ParamField>
+<ParamField path="priority" type="str" default="normal">
+  Either `'normal'` or `'low'`.
+</ParamField>
+<ParamField path="api_key" type="str">
+  The Datadog API key for your account.
+</ParamField>
+
+---
+
+## Namespacing
+
+Set `__NAMESPACE__` on your class to prefix all submissions automatically:
+
+```python
+class AwesomeCheck(AgentCheck):
+    __NAMESPACE__ = 'awesome'
+
+    def check(self, instance):
+        self.gauge('requests', 42)    # → awesome.requests
+        self.gauge('errors', 1)       # → awesome.errors
+        self.service_check('can_connect', AgentCheck.OK)  # → awesome.can_connect
+```
+
+To submit a specific metric without the namespace, use `raw=True`:
+
+```python
+self.gauge('test', 1.23, tags=['foo:bar'], raw=True)
+# → 'test', not 'awesome.test'
+```

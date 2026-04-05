@@ -1,0 +1,242 @@
+---
+title: "Building log crawler integrations"
+description: "A step-by-step tutorial for building Datadog integrations that collect logs from HTTP API endpoints using the LogCrawlerCheck base class."
+---
+
+Some systems expose their logs through HTTP endpoints rather than log files that the Logs Agent can tail. For these cases, you build an Agent integration that crawls the endpoint and submits the logs — a log crawler.
+
+This tutorial walks through building a log crawler integration from scratch using the `LogCrawlerCheck` base class.
+
+## Log crawlers vs log collection
+
+The standard Datadog Logs Agent works by tailing log files on disk. A log crawler integration is the right approach when:
+
+- The log source is a remote HTTP API (a SaaS product, a cloud service, a hosted platform).
+- Logs cannot be written to a file that the Agent can access.
+- You need to paginate through an API to retrieve log records.
+
+A log crawler integration runs as an Agent check on a configurable interval. It fetches new log records from the API, submits them to the Datadog Logs intake, and checkpoints its position so the next run picks up where the last one left off.
+
+## How it works
+
+The `LogCrawlerCheck` base class handles cursor management and log submission. You implement two things:
+
+- A `LogCrawlerCheck` subclass that returns one or more `LogStream` objects.
+- A `LogStream` subclass that yields `LogRecord` objects from the API.
+
+The Agent flow looks like this:
+
+1. The check runs and calls `get_log_streams()` to get the configured streams.
+2. For each stream, the check reads the last saved cursor from the persistent cache.
+3. The check calls `stream.records(cursor=<last_cursor>)` to get new log records.
+4. Each `LogRecord` is written to a local log file.
+5. The Logs Agent tails the local log file and ships logs to the Datadog Logs intake.
+6. After all records are processed, the cursor from the last record is saved to the persistent cache.
+
+## Prerequisites
+
+- The `ddev` CLI tool installed and configured.
+- A running development environment.
+- Familiarity with the Datadog check development workflow.
+
+## Tutorial: build an HTTP log crawler
+
+This tutorial builds an integration for a fictional API provided by ACME Inc.
+
+<Steps>
+  <Step title="Create the integration scaffolding">
+    Run the following command to generate the integration directory:
+
+    ```bash
+    ddev create ACME
+    ```
+
+    This adds an `acme` folder in your `integrations-core` directory with the standard integration layout.
+  </Step>
+
+  <Step title="Set up the test environment">
+    Add a minimal `dd_environment` fixture to `tests/conftest.py` so you can run the check locally:
+
+    ```python
+    @pytest.fixture(scope='session')
+    def dd_environment():
+        yield {'tags': ['tutorial:acme']}
+    ```
+
+    Start the development environment:
+
+    ```bash
+    ddev env start acme py3.11 --dev
+    ```
+  </Step>
+
+  <Step title="Define the check class">
+    Open `datadog_checks/acme/check.py` and define a class that extends `LogCrawlerCheck`:
+
+    ```python
+    from datadog_checks.base.checks.logs.crawler.base import LogCrawlerCheck
+
+
+    class AcmeCheck(LogCrawlerCheck):
+        __NAMESPACE__ = 'acme'
+    ```
+
+    Run the check command to verify the scaffolding works:
+
+    ```bash
+    ddev env agent acme py3.11 check
+    ```
+
+    You'll see this error — that's expected:
+
+    ```
+    Can't instantiate abstract class AcmeCheck with abstract method get_log_streams
+    ```
+
+    `get_log_streams` is a required abstract method. You implement it in the next step.
+  </Step>
+
+  <Step title="Define a log stream">
+    A `LogStream` represents one source of log records (for example, one API endpoint or one log category). Add a `LogStream` subclass and return it from `get_log_streams`:
+
+    ```python
+    from datadog_checks.base.checks.logs.crawler.base import LogCrawlerCheck
+    from datadog_checks.base.checks.logs.crawler.stream import LogStream
+
+
+    class AcmeCheck(LogCrawlerCheck):
+        __NAMESPACE__ = 'acme'
+
+        def get_log_streams(self):
+            return [AcmeLogStream(check=self, name='ACME log stream')]
+
+
+    class AcmeLogStream(LogStream):
+        """Stream of logs from ACME"""
+    ```
+
+    Running the check command now shows a new error:
+
+    ```
+    TypeError: Can't instantiate abstract class AcmeLogStream with abstract method records
+    ```
+
+    The `records` method is next.
+  </Step>
+
+  <Step title="Implement the records method">
+    The `records` method accepts a `cursor` argument and returns an iterator of `LogRecord` objects. Start with a minimal implementation:
+
+    ```python
+    from datadog_checks.base.checks.logs.crawler.stream import LogRecord, LogStream
+    from datadog_checks.base.utils.time import get_timestamp
+
+
+    class AcmeLogStream(LogStream):
+        """Stream of logs from ACME"""
+
+        def records(self, cursor=None):
+            return [
+                LogRecord(
+                    data={'message': 'This is a log from ACME.', 'level': 'info'},
+                    cursor={'timestamp': get_timestamp()},
+                )
+            ]
+    ```
+
+    A `LogRecord` has two fields:
+
+    - `data` — a dictionary of log fields to submit to Datadog. Any key-value pairs are accepted; `message` and `level` are common conventions.
+    - `cursor` — a dictionary that uniquely identifies this specific record's position in the stream. The check saves the cursor from the last record after each run, and passes it back as the `cursor` argument on the next run.
+  </Step>
+
+  <Step title="Add cursor-based pagination">
+    The `cursor` argument to `records` is `None` the first time the integration runs. On every subsequent run it is set to the `cursor` value of the last `LogRecord` yielded in the previous run.
+
+    Use the cursor to request only new records from the API:
+
+    ```python
+    from datadog_checks.base.checks.logs.crawler.stream import LogRecord, LogStream
+    from datadog_checks.base.utils.time import get_timestamp
+
+
+    class AcmeLogStream(LogStream):
+        """Stream of logs from ACME"""
+
+        def records(self, cursor=None):
+            since = cursor.get('timestamp') if cursor else None
+
+            # Fetch logs from the ACME API, passing `since` as a filter
+            logs = self._fetch_logs(since=since)
+
+            for log in logs:
+                yield LogRecord(
+                    data={'message': log['message'], 'level': log['level']},
+                    cursor={'timestamp': log['timestamp']},
+                )
+
+        def _fetch_logs(self, since=None):
+            # Build and execute the HTTP request to the ACME API
+            params = {}
+            if since:
+                params['start_time'] = since
+            response = self.check.http.get('https://api.acme.example.com/logs', params=params)
+            response.raise_for_status()
+            return response.json().get('logs', [])
+    ```
+
+    <Note>
+      The `self.check.http` attribute provides the base check's HTTP client with built-in support for retries, proxies, TLS verification, and authentication. See the HTTP capabilities documentation for details.
+    </Note>
+  </Step>
+</Steps>
+
+## Cursor design
+
+Cursors checkpoint your progress through the log stream. A few guidelines:
+
+- **Use UTC timestamps.** Avoid local time zones.
+- **Timestamps alone may not be unique.** If multiple log records can have the same timestamp, include an additional field — a log ID, sequence number, or offset — to distinguish them.
+- **Use the API's native identifier when available.** Many APIs return a `next_cursor` or `page_token` that is directly usable as the cursor value.
+- **Skip logs older than 18 hours.** The Datadog Logs intake does not accept logs older than 18 hours. You can skip generating `LogRecord` items for old logs to avoid unnecessary processing.
+
+Example cursor using both timestamp and ID:
+
+```python
+LogRecord(
+    data={'message': log['message']},
+    cursor={
+        'timestamp': log['created_at'],
+        'log_id': log['id'],
+    },
+)
+```
+
+## Persistent cache
+
+The `LogCrawlerCheck` automatically reads and writes cursors to the [persistent cache](https://docs.datadoghq.com/developers/integrations/python/) between check runs. You do not need to manage the cache directly — the base class handles it for each stream using the stream name as the cache key.
+
+After a check run completes, the cursor from the last yielded `LogRecord` is saved. If the Agent restarts, the next run resumes from that saved cursor.
+
+## Configuration
+
+You can expose configuration options through the standard `instance` config in `conf.yaml`. Access them in your check class via `self.instance`:
+
+```python
+class AcmeLogStream(LogStream):
+    """Stream of logs from ACME"""
+
+    def records(self, cursor=None):
+        api_url = self.check.instance.get('api_url', 'https://api.acme.example.com/logs')
+        # ...
+```
+
+This allows users to configure the API endpoint, page size, and other parameters without modifying the check code.
+
+## Schedule and performance
+
+The Agent schedules check runs approximately every 10–15 seconds. Keep these considerations in mind:
+
+- Keep each `records` invocation fast. Paginate lazily using a generator (`yield`) rather than loading all records into memory at once.
+- If the API rate-limits requests, handle `429` responses and back off accordingly.
+- Use the `cursor` to request only records newer than the last run, rather than re-fetching all records each time.

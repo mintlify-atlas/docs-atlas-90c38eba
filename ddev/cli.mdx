@@ -1,0 +1,593 @@
+---
+title: "CLI reference"
+description: "Complete reference for all ddev commands — testing, environment management, validation, releases, configuration, and more."
+---
+
+`ddev` is invoked as a standard CLI tool. Every command supports `-h` / `--help` for inline documentation.
+
+## Global flags
+
+These flags apply to all `ddev` commands.
+
+<AccordionGroup>
+  <Accordion title="Global flags">
+    <ParamField path="--core / -c" type="flag">
+      Work on `integrations-core` regardless of the current directory or config.
+    </ParamField>
+    <ParamField path="--extras / -e" type="flag">
+      Work on `integrations-extras`.
+    </ParamField>
+    <ParamField path="--marketplace / -m" type="flag">
+      Work on `marketplace`.
+    </ParamField>
+    <ParamField path="--agent / -a" type="flag">
+      Work on `datadog-agent`.
+    </ParamField>
+    <ParamField path="--here / -x" type="flag">
+      Use the current working directory as the repository root.
+    </ParamField>
+    <ParamField path="--org / -o" type="string">
+      Override the `org` config field for this invocation only.
+    </ParamField>
+    <ParamField path="--color / --no-color" type="flag">
+      Force or disable colored output. Auto-detected by default. Also controlled by `FORCE_COLOR` / `NO_COLOR` environment variables.
+    </ParamField>
+    <ParamField path="--interactive / --no-interactive" type="flag">
+      Allow or suppress prompts and progress bars. Auto-detected in CI. Also controlled by `DDEV_INTERACTIVE`.
+    </ParamField>
+    <ParamField path="--verbose / -v" type="flag">
+      Increase verbosity. Can be used multiple times (e.g., `-vv`). Also controlled by `DDEV_VERBOSE`.
+    </ParamField>
+    <ParamField path="--quiet / -q" type="flag">
+      Decrease verbosity. Can be used multiple times. Also controlled by `DDEV_QUIET`.
+    </ParamField>
+    <ParamField path="--config" type="string">
+      Path to a custom config file. Also controlled by `DDEV_CONFIG`.
+    </ParamField>
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## ddev test
+
+Run unit and integration tests for one or more integrations.
+
+```bash
+ddev test [OPTIONS] [TARGET_SPEC] [-- PYTEST_ARGS...]
+```
+
+`TARGET_SPEC` has the form `<integration>[:<env1>,<env2>]`. Use `changed` (the default) to test only integrations with uncommitted changes, or `all` to test every testable integration.
+
+<CodeGroup>
+
+```bash List available environments
+ddev test -l postgres
+```
+
+```bash Run tests for a specific integration
+ddev test postgres
+```
+
+```bash Run a specific environment
+ddev test postgres:py3.11-16.0
+```
+
+```bash Run multiple environments
+ddev test postgres:py3.11-9.6,py3.11-16.0
+```
+
+```bash Pass arguments directly to pytest
+ddev test postgres -- -k test_my_special_test
+```
+
+```bash Run only unit-marked tests
+ddev test postgres:py3.11-9.6 -- -m unit
+```
+
+</CodeGroup>
+
+<AccordionGroup>
+  <Accordion title="ddev test flags">
+    <ParamField path="--list / -l" type="flag">
+      Show available test environments for the target without running any tests.
+    </ParamField>
+    <ParamField path="--lint / -s" type="flag">
+      Run only lint and style checks.
+    </ParamField>
+    <ParamField path="--lint-unsafe / -su" type="flag">
+      Show unsafe fixes proposed by the linter.
+    </ParamField>
+    <ParamField path="--fmt / -fs" type="flag">
+      Fix formatting and linting errors automatically.
+    </ParamField>
+    <ParamField path="--fmt-unsafe / -fsu" type="flag">
+      Fix formatting and linting errors including those marked unsafe by ruff.
+    </ParamField>
+    <ParamField path="--cov / -c" type="flag">
+      Measure code coverage and print a coverage report after tests complete.
+    </ParamField>
+    <ParamField path="--bench / -b" type="flag">
+      Run only benchmark environments (skipped by default).
+    </ParamField>
+    <ParamField path="--latest" type="flag">
+      Only verify support of new product versions via `latest-env` environments.
+    </ParamField>
+    <ParamField path="--compat" type="flag">
+      Check compatibility with the minimum allowed Agent version. Implies `--recreate`.
+    </ParamField>
+    <ParamField path="--recreate / -r" type="flag">
+      Recreate Hatch environments from scratch before running tests.
+    </ParamField>
+    <ParamField path="--memray" type="flag">
+      Measure memory usage during test execution (Linux and macOS only).
+    </ParamField>
+    <ParamField path="--ddtrace" type="flag">
+      Enable Datadog tracing during test execution. Also controlled by `DDEV_TEST_ENABLE_TRACING`.
+    </ParamField>
+  </Accordion>
+</AccordionGroup>
+
+<Tip>
+`ddev test -fs <integration>` is the standard way to auto-format code before committing.
+</Tip>
+
+---
+
+## ddev env
+
+Manage E2E environments backed by Docker, Vagrant, or a local Agent.
+
+### ddev env show
+
+```bash
+ddev env show [INTEGRATION] [ENVIRONMENT]
+```
+
+With no arguments, lists all currently active environments across all integrations. With an integration name, shows both active and available environments for that integration.
+
+<CodeGroup>
+
+```bash Show all active environments
+ddev env show
+```
+
+```bash Show active and available environments for postgres
+ddev env show postgres
+```
+
+</CodeGroup>
+
+### ddev env start
+
+```bash
+ddev env start [OPTIONS] INTEGRATION ENVIRONMENT
+```
+
+Start a specific E2E environment. After startup, `ddev` prints useful follow-up commands.
+
+<CodeGroup>
+
+```bash Start the default environment
+ddev env start postgres py3.11-16.0
+```
+
+```bash Start with the local integration installed
+ddev env start --dev postgres py3.11-16.0
+```
+
+```bash Start with the local base package installed
+ddev env start --base postgres py3.11-16.0
+```
+
+```bash Override the Agent build for this run
+ddev env start --agent datadog/agent:7.18.1 postgres py3.11-16.0
+```
+
+</CodeGroup>
+
+<AccordionGroup>
+  <Accordion title="ddev env start flags">
+    <ParamField path="--dev" type="flag">
+      Install the local version of the integration into the Agent environment.
+    </ParamField>
+    <ParamField path="--base" type="flag">
+      Install the local version of the `datadog-checks-base` package. Implies `--dev`.
+    </ParamField>
+    <ParamField path="--agent / -a" type="string">
+      The Agent build to use. Accepts a Docker image (e.g., `datadog/agent:latest`) or a key from the `agents` config section.
+    </ParamField>
+    <ParamField path="-e" type="string">
+      Pass additional environment variables to the Agent (e.g., `-e DD_URL=app.datadoghq.com`). Can be repeated.
+    </ParamField>
+  </Accordion>
+</AccordionGroup>
+
+### ddev env stop
+
+```bash
+ddev env stop INTEGRATION ENVIRONMENT
+```
+
+Stop a running environment and clean up its state. Use `all` for either argument to stop all environments.
+
+<CodeGroup>
+
+```bash Stop a specific environment
+ddev env stop postgres py3.11-16.0
+```
+
+```bash Stop all environments for an integration
+ddev env stop postgres all
+```
+
+```bash Stop all running environments
+ddev env stop all all
+```
+
+</CodeGroup>
+
+### ddev env test
+
+```bash
+ddev env test [OPTIONS] INTEGRATION [ENVIRONMENT] [-- PYTEST_ARGS...]
+```
+
+Run E2E tests. If no environment is specified, tests all currently active environments (`active`). Environments that are not running are started and stopped automatically.
+
+<CodeGroup>
+
+```bash Test all active environments
+ddev env test postgres
+```
+
+```bash Test a specific environment
+ddev env test --dev postgres py3.11-16.0
+```
+
+```bash Recreate environments before testing
+ddev env test --recreate --dev postgres py3.11-16.0
+```
+
+</CodeGroup>
+
+<AccordionGroup>
+  <Accordion title="ddev env test flags">
+    <ParamField path="--dev" type="flag">
+      Install the local version of the integration.
+    </ParamField>
+    <ParamField path="--base" type="flag">
+      Install the local version of `datadog-checks-base`. Implies `--dev`.
+    </ParamField>
+    <ParamField path="--agent / -a" type="string">
+      The Agent build to use.
+    </ParamField>
+    <ParamField path="-e" type="string">
+      Extra environment variables to pass to the Agent. Can be repeated.
+    </ParamField>
+    <ParamField path="--recreate / -r" type="flag">
+      Recreate environments from scratch, running `docker compose down --volumes` followed by `docker compose up -d --force-recreate`.
+    </ParamField>
+  </Accordion>
+</AccordionGroup>
+
+### ddev env agent
+
+```bash
+ddev env agent INTEGRATION ENVIRONMENT <AGENT_COMMAND> [ARGS...]
+```
+
+Invoke an Agent command inside a running environment.
+
+<CodeGroup>
+
+```bash Check Agent status
+ddev env agent postgres py3.11-16.0 status
+```
+
+```bash Trigger a check run
+ddev env agent postgres py3.11-16.0 check
+```
+
+</CodeGroup>
+
+### ddev env reload
+
+```bash
+ddev env reload INTEGRATION ENVIRONMENT
+```
+
+Restart the Agent to pick up configuration changes made to the integration config file.
+
+```bash
+ddev env reload postgres py3.11-16.0
+```
+
+### ddev env config
+
+```bash
+ddev env config
+```
+
+Open or display the Agent configuration file for a running environment.
+
+---
+
+## ddev validate
+
+Verify various aspects of the repository. Most subcommands accept an optional integration name to limit validation to a single target; omitting it validates all integrations.
+
+<AccordionGroup>
+  <Accordion title="ddev validate all">
+    Run all available validators at once.
+
+    ```bash
+    ddev validate all
+    ```
+  </Accordion>
+  <Accordion title="ddev validate config">
+    Validate integration configuration spec files.
+
+    ```bash
+    # Validate all integrations
+    ddev validate config
+
+    # Validate and sync a single integration's spec
+    ddev validate config -s postgres
+    ```
+
+    The `-s` / `--sync` flag updates auto-generated files from the spec.
+  </Accordion>
+  <Accordion title="ddev validate models">
+    Validate and optionally regenerate configuration models from config specs.
+
+    ```bash
+    ddev validate models -s postgres
+    ```
+
+    <Warning>
+    Do not edit files in `config_models/` directly. Instead, edit `assets/configuration/spec.yaml` and regenerate with `ddev validate config -s` followed by `ddev validate models -s`.
+    </Warning>
+  </Accordion>
+  <Accordion title="ddev validate metadata">
+    Validate integration metadata files (`metadata.csv`).
+
+    ```bash
+    ddev validate metadata postgres
+    ```
+  </Accordion>
+  <Accordion title="ddev validate dep">
+    Validate that integration dependencies are correctly pinned.
+
+    ```bash
+    ddev validate dep
+    ```
+  </Accordion>
+  <Accordion title="ddev validate licenses">
+    Validate third-party license files.
+
+    ```bash
+    ddev validate licenses
+    ```
+  </Accordion>
+  <Accordion title="ddev validate http">
+    Validate HTTP utility usage in integrations.
+
+    ```bash
+    ddev validate http postgres
+    ```
+  </Accordion>
+  <Accordion title="ddev validate imports">
+    Validate import ordering and style across integrations.
+
+    ```bash
+    ddev validate imports postgres
+    ```
+  </Accordion>
+  <Accordion title="ddev validate ci">
+    Validate CI configuration files.
+
+    ```bash
+    ddev validate ci
+    ```
+  </Accordion>
+  <Accordion title="ddev validate openmetrics">
+    Validate OpenMetrics-based integrations.
+
+    ```bash
+    ddev validate openmetrics postgres
+    ```
+  </Accordion>
+  <Accordion title="Other validators">
+    Additional validators available:
+
+    | Command | Description |
+    |---|---|
+    | `ddev validate agent-reqs` | Validate Agent requirements files |
+    | `ddev validate codeowners` | Validate CODEOWNERS entries |
+    | `ddev validate dashboards` | Validate dashboard JSON files |
+    | `ddev validate eula` | Validate EULA files for Marketplace integrations |
+    | `ddev validate integration-style` | Validate integration style conventions |
+    | `ddev validate jmx-metrics` | Validate JMX metrics definitions |
+    | `ddev validate labeler` | Validate GitHub labeler configuration |
+    | `ddev validate legacy-signature` | Validate legacy check signatures |
+    | `ddev validate license-headers` | Validate source file license headers |
+    | `ddev validate package` | Validate packaging metadata |
+    | `ddev validate readmes` | Validate README files |
+    | `ddev validate saved-views` | Validate saved view JSON files |
+    | `ddev validate service-checks` | Validate service check metadata |
+    | `ddev validate typos` | Check for common typos |
+    | `ddev validate version` | Validate version strings |
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## ddev release
+
+Manage the release lifecycle for integrations.
+
+<AccordionGroup>
+  <Accordion title="ddev release changelog new">
+    Create new changelog entries in Markdown format.
+
+    ```bash
+    ddev release changelog new <TYPE> [TARGETS...] --message "<TEXT>"
+    ```
+
+    `TYPE` must be one of `fixed`, `added`, or `changed`. If omitted you are prompted interactively.
+
+    <CodeGroup>
+
+    ```bash New feature
+    ddev release changelog new added kafka_consumer -m "Bump OpenSSL in confluent-kafka to 3.4.1 on Windows."
+    ```
+
+    ```bash Bug fix
+    ddev release changelog new fixed postgres -m "Fix connection pool leak under high load."
+    ```
+
+    ```bash Breaking change
+    ddev release changelog new changed postgres -m "Update configuration options for connection pooling."
+    ```
+
+    ```bash All changed integrations (no target)
+    ddev release changelog new added -m "Add support for new metric."
+    ```
+
+    </CodeGroup>
+
+    Changelog entries are named `<PR_NUMBER>.<TYPE>` and placed in the integration's `changelog.d/` directory. Do not create or edit these files manually.
+
+    <Warning>
+    Always use `ddev release changelog new` to create changelog entries. Never create or edit `changelog.d/` files by hand.
+    </Warning>
+  </Accordion>
+  <Accordion title="ddev release changelog fix">
+    Fix existing changelog entries (e.g., to correct typos or update the PR number).
+
+    ```bash
+    ddev release changelog fix
+    ```
+  </Accordion>
+  <Accordion title="ddev release show">
+    Show release information for one or more integrations.
+
+    ```bash
+    ddev release show changes postgres
+    ```
+  </Accordion>
+  <Accordion title="ddev release make">
+    Bump version numbers and prepare integrations for release.
+
+    ```bash
+    ddev release make postgres
+    ```
+  </Accordion>
+  <Accordion title="ddev release tag">
+    Create Git tags for released integrations.
+
+    ```bash
+    ddev release tag postgres
+    ```
+  </Accordion>
+  <Accordion title="ddev release agent">
+    Commands for managing Agent-related release tasks.
+
+    ```bash
+    ddev release agent changelog
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## ddev config
+
+Manage the ddev configuration file.
+
+<CodeGroup>
+
+```bash Show the current (merged) config
+ddev config show
+```
+
+```bash Find the config file path
+ddev config find
+```
+
+```bash Set a value
+ddev config set repo core
+```
+
+```bash Set a nested value
+ddev config set github.user your-username
+```
+
+```bash Set a value in the local override file
+ddev config set repo extras --overrides
+```
+
+```bash Open config in your editor
+ddev config edit
+```
+
+```bash Open the local override file
+ddev config edit --overrides
+```
+
+```bash Create a local override for the current directory
+ddev config override
+```
+
+```bash Restore defaults
+ddev config restore
+```
+
+</CodeGroup>
+
+See [Configuration](/ddev/configuration) for a full description of every config option.
+
+---
+
+## ddev run
+
+Run an arbitrary script in the context of an integration's environment. This command is inherited from `datadog-checks-dev`.
+
+```bash
+ddev run <SCRIPT> [ARGS...]
+```
+
+---
+
+## ddev dep
+
+Manage integration dependencies.
+
+```bash
+# Sync all dependency pinnings
+ddev dep sync
+
+# Update a specific dependency
+ddev dep update requests
+```
+
+---
+
+## ddev create
+
+Scaffold a new integration from a template.
+
+```bash
+ddev create my-new-integration
+```
+
+---
+
+## ddev clean
+
+Remove build artifacts and caches.
+
+```bash
+ddev clean postgres
+```

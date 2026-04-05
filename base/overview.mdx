@@ -1,0 +1,145 @@
+---
+title: "Base Package Overview"
+description: "Introduction to the Datadog integrations base package, the AgentCheck base class, and how to write your first check."
+---
+
+The `datadog-checks-base` package provides all the functionality and utilities necessary for writing Datadog Agent integrations. Most importantly, it provides the `AgentCheck` base class from which every check must inherit.
+
+## Installation and import
+
+The package is available as `datadog-checks-base`. Import the base class in your check module:
+
+```python
+from datadog_checks.base import AgentCheck
+```
+
+## Writing a check
+
+Every integration is a Python class that subclasses `AgentCheck` and implements a `check` method. The Agent calls `check` on each collection interval.
+
+```python
+from datadog_checks.base import AgentCheck
+
+
+class AwesomeCheck(AgentCheck):
+    __NAMESPACE__ = 'awesome'
+
+    def check(self, instance):
+        self.gauge('test', 1.23, tags=['foo:bar'])
+```
+
+In this example:
+
+- `__NAMESPACE__` is set to `'awesome'`, so every metric name is automatically prefixed with `awesome.`. The gauge above is submitted as `awesome.test`.
+- `self.gauge('test', 1.23, tags=['foo:bar'])` submits a gauge metric with a value of `1.23` tagged with `foo:bar`.
+
+The `check` method calls a C binding under the hood, which communicates with the Datadog Agent (written in Go).
+
+## How the Agent discovers checks
+
+The Datadog Agent searches for two things at the root of every check package:
+
+- A `__version__` string
+- A subclass of `AgentCheck`
+
+A typical `__init__.py` for a check package looks like this:
+
+```python
+from .__about__ import __version__
+from .check import AwesomeCheck
+
+__all__ = ['__version__', 'AwesomeCheck']
+```
+
+The version appears in the Agent's status output:
+
+```
+=========
+Collector
+=========
+
+  Running Checks
+  ==============
+
+    AwesomeCheck (0.0.1)
+    --------------------
+      Instance ID: 1234 [OK]
+      Configuration Source: file:/etc/datadog-agent/conf.d/awesomecheck.d/awesomecheck.yaml
+      Total Runs: 12
+      Metric Samples: Last Run: 242, Total: 2,904
+      Events: Last Run: 0, Total: 0
+      Service Checks: Last Run: 0, Total: 0
+      Average Execution Time : 49ms
+```
+
+If no `__version__` is found, the Agent defaults to `0.0.0`.
+
+## Check initialization
+
+Use `check_initializations` to run setup code exactly once before the first check run. This is useful for parsing configuration or setting up connections without failing silently in `__init__`.
+
+```python
+class AirflowCheck(AgentCheck):
+    def __init__(self, name, init_config, instances):
+        super(AirflowCheck, self).__init__(name, init_config, instances)
+
+        self._url = self.instance.get('url', '')
+        self._tags = self.instance.get('tags', [])
+
+        # Defer config parsing to the first run so errors are visible per-run
+        self.check_initializations.append(self._parse_config)
+
+    def _parse_config(self):
+        # Runs once, before the first call to check()
+        ...
+```
+
+<Note>
+Any errors raised in `__init__` are logged only once, making them difficult to spot. Deferring configuration parsing to `check_initializations` makes errors visible on every failed run until the issue is resolved.
+</Note>
+
+## Namespacing
+
+Set `__NAMESPACE__` on your class to prefix every metric, service check, and event automatically:
+
+```python
+class AwesomeCheck(AgentCheck):
+    __NAMESPACE__ = 'awesome'
+
+    def check(self, instance):
+        self.gauge('requests', 42)        # submitted as awesome.requests
+        self.gauge('errors', 3)           # submitted as awesome.errors
+```
+
+To bypass the namespace for a specific submission, pass `raw=True`:
+
+```python
+self.gauge('test', 1.23, tags=['foo:bar'], raw=True)
+# submitted as 'test', not 'awesome.test'
+```
+
+## Explore the base package
+
+<CardGroup cols={2}>
+  <Card title="Metrics and Events" icon="chart-line" href="/base/metrics-and-events">
+    All metric types, service checks, events, and namespacing.
+  </Card>
+  <Card title="HTTP" icon="globe" href="/base/http">
+    The HTTP wrapper for making consistent, configured HTTP requests.
+  </Card>
+  <Card title="OpenMetrics" icon="circle-dot" href="/base/openmetrics">
+    The OpenMetrics v2 base check for scraping Prometheus endpoints.
+  </Card>
+  <Card title="Databases" icon="database" href="/base/databases">
+    The query framework for collecting metrics from any database.
+  </Card>
+  <Card title="TLS/SSL" icon="lock" href="/base/tls">
+    TLS context creation and configuration for secure connections.
+  </Card>
+  <Card title="Persistent Cache" icon="hard-drive" href="/base/persistent-cache">
+    Key/value store for maintaining state across check runs.
+  </Card>
+  <Card title="API Reference" icon="book" href="/base/api">
+    Complete reference for all public AgentCheck methods.
+  </Card>
+</CardGroup>

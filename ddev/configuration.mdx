@@ -1,0 +1,200 @@
+---
+title: "Configuration"
+description: "Configure ddev using the global TOML config file and per-directory .ddev.toml overrides. Covers repository paths, Agent builds, organization credentials, and GitHub tokens."
+---
+
+All configuration is managed through a global [TOML](https://toml.io) config file. Use the `ddev config` command group to inspect and modify it.
+
+## Locating the config file
+
+```bash
+ddev config find
+```
+
+This prints the path to your global `config.toml`. If a `.ddev.toml` override file is active in your current directory, its path is shown as well:
+
+```
+/Users/you/.config/ddev/config.toml
+----- Overrides applied from .ddev.toml
+```
+
+<Info>
+When you run `ddev`, it searches the current working directory and its parent directories for a `.ddev.toml` file. Any options defined there override the global config. See [Multi-repo and worktrees](/ddev/multirepo) for details.
+</Info>
+
+## Viewing and editing config
+
+```bash
+# Print the current merged configuration
+ddev config show
+
+# Open the global config in your default editor
+ddev config edit
+
+# Open the local .ddev.toml override in your editor
+ddev config edit --overrides
+```
+
+## Setting values
+
+```bash
+ddev config set <KEY> <VALUE>
+```
+
+Use dot notation for nested keys:
+
+```bash
+ddev config set github.user your-github-username
+ddev config set github.token
+```
+
+Add `--overrides` to write the value to the nearest `.ddev.toml` instead of the global config:
+
+```bash
+ddev config set repo extras --overrides
+```
+
+## Repository configuration
+
+All CLI commands are aware of the current repository context, set by the `repo` option. This should reference a key in the `repos` table that maps to the absolute path of a supported repository.
+
+```toml
+repo = "core"
+
+[repos]
+core = "/path/to/integrations-core"
+extras = "/path/to/integrations-extras"
+agent = "/path/to/datadog-agent"
+```
+
+With this configuration, running `ddev test nginx` looks for the `nginx` integration in `/path/to/integrations-core` regardless of your current directory. If the resolved path does not exist, `ddev` falls back to the current directory.
+
+<ParamField path="repo" type="string" default="core">
+  The active repository key. Must match a key defined in `[repos]`.
+</ParamField>
+
+<ParamField path="repos" type="table">
+  A map of repository names to their absolute filesystem paths.
+</ParamField>
+
+## Agent configuration
+
+For E2E environments that run a live Agent, select the specific build with the `agent` option. This references a key in the `agents` table, which maps environment types to Agent versions.
+
+```toml
+agent = "master"
+
+[agents.master]
+docker = "datadog/agent-dev:master"
+local = "latest"
+
+[agents."7.18.1"]
+docker = "datadog/agent:7.18.1"
+local = "7.18.1"
+```
+
+Environments that define their type as `docker` will use the Docker image specified under the matching `agents` key. The `local` field is used for non-containerized environments.
+
+<ParamField path="agent" type="string" default="dev">
+  The active agent key. Must match a key defined in `[agents]`.
+</ParamField>
+
+<ParamField path="agents.<name>.docker" type="string">
+  Docker image to pull for Docker-type environments (e.g., `datadog/agent-dev:master`).
+</ParamField>
+
+<ParamField path="agents.<name>.local" type="string">
+  Agent version string for locally installed Agents.
+</ParamField>
+
+## Organization configuration
+
+Switch between Datadog organizations with the `org` option. This references a key in the `orgs` table containing the credentials and endpoint for that organization.
+
+```toml
+org = "staging"
+
+[orgs.staging]
+api_key = "<API_KEY>"
+app_key = "<APP_KEY>"
+site = "datadoghq.eu"
+```
+
+<ParamField path="org" type="string" default="default">
+  The active organization key. Must match a key defined in `[orgs]`.
+</ParamField>
+
+<ParamField path="orgs.<name>.api_key" type="string">
+  Datadog API key for the organization.
+</ParamField>
+
+<ParamField path="orgs.<name>.app_key" type="string">
+  Datadog application key for the organization.
+</ParamField>
+
+<ParamField path="orgs.<name>.site" type="string">
+  The Datadog site to submit data to (e.g., `datadoghq.eu`). Corresponds to the Agent's `DD_SITE`.
+</ParamField>
+
+<ParamField path="orgs.<name>.dd_url" type="string">
+  Custom core Agent intake URL, overriding the default for the selected site.
+</ParamField>
+
+<ParamField path="orgs.<name>.log_url" type="string">
+  Custom Logs Agent intake URL.
+</ParamField>
+
+You can override the active org for a single command invocation with the `-o` / `--org` global flag:
+
+```bash
+ddev -o staging env start postgres py3.11-16.0
+```
+
+## GitHub configuration
+
+Several `ddev release` commands interact with the GitHub API. Without credentials, you will quickly hit GitHub's public API rate limits.
+
+Set your GitHub user and personal access token:
+
+<Steps>
+  <Step title="Set your GitHub username">
+    ```bash
+    ddev config set github.user <YOUR_GITHUB_USERNAME>
+    ```
+  </Step>
+  <Step title="Create a personal access token">
+    Create a [personal access token](https://github.com/settings/tokens) with the `public_repo` and `read:org` scopes.
+  </Step>
+  <Step title="Set the token">
+    ```bash
+    ddev config set github.token
+    ```
+    Paste the token when prompted. The value is masked in `ddev config show`.
+  </Step>
+  <Step title="Enable SSO (Datadog employees)">
+    [Enable single sign-on](https://docs.github.com/en/enterprise-cloud@latest/authentication/authenticating-with-saml-single-sign-on/authorizing-a-personal-access-token-for-use-with-saml-single-sign-on) for the token if your organization requires SAML SSO.
+  </Step>
+</Steps>
+
+Alternatively, set these as environment variables:
+
+```bash
+export DD_GITHUB_USER=your-github-username
+export DD_GITHUB_TOKEN=ghp_...
+```
+
+<ParamField path="github.user" type="string">
+  Your GitHub username. Can also be set with `DD_GITHUB_USER`.
+</ParamField>
+
+<ParamField path="github.token" type="string">
+  A GitHub personal access token with `public_repo` and `read:org` permissions. Can also be set with `DD_GITHUB_TOKEN`.
+</ParamField>
+
+## Restoring defaults
+
+```bash
+ddev config restore
+```
+
+This resets the global config to its default settings. If a `.ddev.toml` override file exists in the current directory, you are prompted whether to delete it as well.

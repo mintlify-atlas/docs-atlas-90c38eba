@@ -1,0 +1,79 @@
+---
+title: "Introduction"
+description: "What integrations-core is, the Check concept, and an overview of the key components that make up the repository."
+---
+
+**Integrations Core** is the official repository for all Datadog Agent integrations that ship with the Agent itself. It contains over 400 integrations — from PostgreSQL and Kafka to Kubernetes and vSphere — along with the base Python package every integration depends on and the developer toolchain used to build and test them.
+
+If you want to contribute to an existing official integration or understand how the Agent integration framework works, this is the right place to start. For _new_ integrations that aren't yet officially maintained by Datadog, open a pull request in [integrations-extras](https://github.com/DataDog/integrations-extras) instead.
+
+## The Check concept
+
+The terms "integration" and "Check" are often used interchangeably, but they mean slightly different things.
+
+A **Check** is any integration whose execution is triggered directly in code by the Datadog Agent. All Agent-based integrations written in Python or Go are considered Checks. You implement a Check by subclassing `AgentCheck` from the base package and defining a `check` method — the Agent calls that method on each collection interval.
+
+```python
+from datadog_checks.base import AgentCheck
+
+class MyCheck(AgentCheck):
+    __NAMESPACE__ = 'my_integration'
+
+    def check(self, instance):
+        self.gauge('up', 1, tags=['env:prod'])
+```
+
+The Agent manages scheduling, error handling, and metric submission. Your `check` method only needs to collect data and call the appropriate submission methods (`gauge`, `count`, `service_check`, etc.).
+
+## Key components
+
+<CardGroup cols={2}>
+  <Card title="datadog_checks_base" icon="cube" href="/base/overview">
+    The Python base package every integration inherits from. Provides `AgentCheck`, HTTP wrappers, OpenMetrics scrapers, database helpers, TLS utilities, and the persistent cache API.
+  </Card>
+  <Card title="ddev" icon="wrench" href="/ddev/overview">
+    The developer CLI tool. Use it to run tests, manage E2E environments, validate configuration specs, lint code, and cut releases.
+  </Card>
+  <Card title="400+ integrations" icon="plug" href="https://github.com/DataDog/integrations-core">
+    Every officially supported Agent integration lives in its own top-level directory. Each contains the Check code, tests, metadata, assets, and configuration spec.
+  </Card>
+  <Card title="Contributing guidelines" icon="book" href="/guidelines/pull-requests">
+    The PR workflow, changelog conventions, commit message rules, and code style guide for contributing to the repository.
+  </Card>
+</CardGroup>
+
+## Repository layout
+
+Each integration directory follows a consistent structure:
+
+```
+postgres/
+├── datadog_checks/
+│   └── postgres/          # Integration source code
+│       ├── __init__.py
+│       └── postgres.py    # AgentCheck subclass
+├── tests/                 # Unit and integration tests
+├── assets/
+│   └── configuration/
+│       └── spec.yaml      # Configuration spec (source of truth)
+├── config_models/         # Auto-generated from spec.yaml — do not edit directly
+├── changelog.d/           # Changelog fragments
+├── manifest.json          # Integration metadata
+└── pyproject.toml         # Hatch environment configuration
+```
+
+<Note>
+  Never edit files in `config_models/` directly. To change configuration models, edit `assets/configuration/spec.yaml` and regenerate with `ddev -x validate config -s <integration>` followed by `ddev -x validate models -s <integration>`.
+</Note>
+
+## How the toolchain fits together
+
+[**hatch**](https://hatch.pypa.io) manages isolated Python environments for each integration. [**pytest**](https://pytest.org) is the test framework. **ddev** ties them together with a higher-level CLI that understands the repository structure and manages Docker containers for integration tests and E2E environments.
+
+When you run `ddev test postgres`, ddev reads the integration's `pyproject.toml`, spins up the appropriate hatch environments, and invokes pytest — including pulling and starting any required Docker services.
+
+## Next steps
+
+<Card title="Set up your development environment" icon="rocket" href="/setup">
+  Install Python 3.13, pipx, and ddev, then configure ddev to point at your local clone of the repository.
+</Card>

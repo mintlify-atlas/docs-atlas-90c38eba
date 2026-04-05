@@ -1,0 +1,283 @@
+---
+title: "SNMP Integration Architecture"
+description: "A deep-dive into how the Datadog SNMP integration discovers devices, collects metrics via profiles, and scales with Agent auto-discovery and the Cluster Agent."
+---
+
+<Note>
+  This page is for developers who want to understand the internals of the SNMP integration. Before reading, familiarize yourself with SNMP concepts and the official SNMP integration docs.
+</Note>
+
+## Overview
+
+Most Datadog integrations are written in Python, JMX, or Go. The SNMP integration is more complex because it spans two separate components:
+
+<CardGroup cols={2}>
+  <Card title="Python check" icon="snake">
+    Collects metrics from a specific device IP using profiles, and includes a multithreaded auto-discovery implementation (pending deprecation).
+  </Card>
+  <Card title="Agent service listener" icon="tower-broadcast">
+    Discovers devices over a network as a proper Go service listener inside the Agent, forwarding discovered instances into the existing Agent check scheduling pipeline.
+  </Card>
+</CardGroup>
+
+The diagram below illustrates how these components interact in a typical VM-based single-Agent setup. For Kubernetes environments, see [Cluster Agent support](#cluster-agent-support).
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                      Datadog Agent                      │
+│                                                         │
+│  ┌───────────────────┐      ┌────────────────────────┐  │
+│  │  SNMP Listener    │─────▶│  Check Scheduler       │  │
+│  │  (Go / Agent)     │      │                        │  │
+│  └───────────────────┘      └──────────┬─────────────┘  │
+│                                        │                │
+│                             ┌──────────▼─────────────┐  │
+│                             │  Python SNMP Check     │  │
+│                             │  (per-device instance) │  │
+│                             └──────────┬─────────────┘  │
+└──────────────────────────────────────  │  ──────────────┘
+                                         │ SNMP (UDP 161)
+                              ┌──────────▼──────────────┐
+                              │  Network Devices         │
+                              │  (routers, switches …)  │
+                              └─────────────────────────┘
+```
+
+## Python check
+
+### Dependencies
+
+The Python check uses [PySNMP](https://github.com/etingof/pysnmp) to issue SNMP queries and manipulate SNMP data — OIDs, variables, and MIBs.
+
+### Device monitoring
+
+The primary responsibility of the Python check is to collect metrics from a device identified by its IP address. Like all Python checks, it supports multi-instance configuration where each instance represents one device:
+
+```yaml
+instances:
+  - ip_address: "192.168.0.12"
+    # additional options ...
+```
+
+Metrics typically come from [device profiles](/tutorials/snmp), but you can also specify OIDs explicitly in the instance configuration.
+
+### Python auto-discovery
+
+<Warning>
+  Python auto-discovery is pending deprecation. You should use Agent auto-discovery instead. When the deprecation period ends, auto-discovery logic will be removed from the Python check entirely.
+</Warning>
+
+#### How it works
+
+Python auto-discovery activates when you configure `network_address` instead of `ip_address`:
+
+```yaml
+instances:
+  - network_address: "192.168.0.0/28"
+    # additional options ...
+```
+
+The check performs five distinct tasks in this mode:
+
+<Steps>
+  <Step title="Find new devices">
+    For each IP in the `network_address` CIDR range, the check queries the device's `sysObjectID`. If the query succeeds and the `sysObjectID` matches a registered profile, the device is added as a discovered instance. This runs at regular intervals in a dedicated thread.
+  </Step>
+  <Step title="Cache devices">
+    Discovered instances are cached on disk based on a hash of the instance configuration. The cache is invalidated whenever the `network_address` configuration changes, since options from the `network_address` instance are copied into each discovered instance.
+  </Step>
+  <Step title="Check devices">
+    On each check run, all discovered instances are checked in parallel using a thread pool. The check waits for all sub-checks to complete before reporting results.
+  </Step>
+  <Step title="Handle failures">
+    Discovered instances that fail consecutively beyond a configured threshold are dropped. They can be rediscovered on a future scan.
+  </Step>
+  <Step title="Submit discovery metrics">
+    The check emits the total count of discovered devices for each `network_address` instance.
+  </Step>
+</Steps>
+
+#### Caveats
+
+The Python auto-discovery approach has known drawbacks:
+
+- The check mixes two distinct execution paths — "single device" and "entire network" — in a single integration, making the code harder to follow.
+- Each network instance keeps several long-running threads alive well beyond a single check run's lifespan.
+- The network check pseudo-schedules other check instances, which is normally the Agent's responsibility.
+
+## Agent auto-discovery
+
+### Dependencies
+
+Agent auto-discovery uses [GoSNMP](https://github.com/soniah/gosnmp) to retrieve the `sysObjectID` from devices on the network.
+
+### Standalone Agent
+
+Agent auto-discovery implements the same discovery logic as Python auto-discovery, but as a proper service listener in the Agent's Go package. This approach:
+
+- Leverages the existing Agent scheduling pipeline.
+- Enables horizontal scaling via the Datadog Cluster Agent.
+
+Configure it in `datadog.yaml`:
+
+```yaml
+listeners:
+  - name: snmp
+
+snmp_listener:
+  configs:
+    - network: 10.0.0.0/28
+      version: 2
+      community: public
+    - network: 10.0.1.0/30
+      version: 3
+      user: my-snmp-user
+      authentication_protocol: SHA
+      authentication_key: "*****"
+      privacy_protocol: AES
+      privacy_key: "*****"
+      ignored_ip_addresses:
+        - 10.0.1.0
+        - 10.0.1.1
+```
+
+### Cluster Agent support
+
+For Kubernetes environments, the [Datadog Cluster Agent (DCA)](https://docs.datadoghq.com/agent/cluster_agent/) uses the `snmp_listener` configuration as a source of [Cluster checks](https://docs.datadoghq.com/agent/cluster_agent/clusterchecks/).
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                  Kubernetes Cluster                           │
+│                                                              │
+│  ┌─────────────────────────────────┐                         │
+│  │  Datadog Cluster Agent (DCA)    │                         │
+│  │                                 │                         │
+│  │  snmp_listener (Go)             │                         │
+│  │   discovers IP ranges ──────────┼──▶ Cluster check pool  │
+│  └─────────────────────────────────┘         │               │
+│                                              │               │
+│        ┌─────────────────────────────────────┘               │
+│        │                                                     │
+│  ┌─────▼──────────┐  ┌───────────────┐  ┌───────────────┐   │
+│  │ Datadog Agent  │  │ Datadog Agent │  │ Datadog Agent │   │
+│  │ (node 1)       │  │ (node 2)      │  │ (node 3)      │   │
+│  └────────────────┘  └───────────────┘  └───────────────┘   │
+└──────────────────────────────────────────────────────────────┘
+```
+
+The DCA reads `snmp_listener` config to detect IP ranges, then distributes SNMP check instances across the normal Datadog Agents. This approach is highly scalable and supports monitoring large numbers of SNMP devices.
+
+#### Deploying with Helm
+
+<Steps>
+  <Step title="Add the Datadog Helm repository">
+    ```bash
+    helm repo add datadog https://helm.datadoghq.com
+    helm repo update
+    ```
+  </Step>
+  <Step title="Install with your values file">
+    ```bash
+    helm install datadog-monitoring \
+      --set datadog.apiKey=<YOUR_API_KEY> \
+      -f cluster-agent-values.yaml \
+      datadog/datadog
+    ```
+  </Step>
+</Steps>
+
+<Accordion title="Example cluster-agent-values.yaml">
+
+```yaml
+datadog:
+  apiKey: <DATADOG_API_KEY>
+  clusterName: my-snmp-cluster
+
+  clusterChecks:
+    enabled: true
+
+  tags:
+    - 'env:test-snmp-cluster-agent'
+
+clusterAgent:
+  enabled: true
+
+  confd:
+    # Static checks
+    http_check.yaml: |-
+      cluster_check: true
+      instances:
+        - name: 'Check Example Site1'
+          url: http://example.net
+
+    # Autodiscovery template for snmp_listener
+    snmp.yaml: |-
+      cluster_check: true
+
+      ad_identifiers:
+        - snmp
+      init_config:
+      instances:
+        -
+          ip_address: "%%host%%"
+          port: "%%port%%"
+          snmp_version: "%%extra_version%%"
+          timeout: "%%extra_timeout%%"
+          retries: "%%extra_retries%%"
+          community_string: "%%extra_community%%"
+          user: "%%extra_user%%"
+          authKey: "%%extra_auth_key%%"
+          authProtocol: "%%extra_auth_protocol%%"
+          privKey: "%%extra_priv_key%%"
+          privProtocol: "%%extra_priv_protocol%%"
+          context_engine_id: "%%extra_context_engine_id%%"
+          context_name: "%%extra_context_name%%"
+          tags:
+            - "autodiscovery_subnet:%%extra_autodiscovery_subnet%%"
+          extra_tags: "%%extra_tags%%"
+          oid_batch_size: "%%extra_oid_batch_size%%"
+
+  datadog_cluster_yaml:
+    listeners:
+      - name: snmp
+
+    snmp_listener:
+      workers: 2
+      discovery_interval: 10
+      configs:
+        - network: 192.168.1.16/29
+          version: 2
+          port: 1161
+          community: cisco_icm
+        - network: 192.168.1.16/29
+          version: 2
+          port: 1161
+          community: f5
+```
+
+</Accordion>
+
+## Profile system architecture
+
+Device profiles define which OIDs to collect and how to map them to Datadog metrics. The Python check resolves the correct profile for a device by matching its `sysObjectID` against the registered profiles at check startup.
+
+<Tip>
+  Metrics can also be specified explicitly in the instance configuration alongside or instead of profiles, giving you fine-grained control over exactly what is collected from each device.
+</Tip>
+
+## Performance considerations
+
+<AccordionGroup>
+  <Accordion title="OID batch size">
+    The `oid_batch_size` parameter controls how many OIDs are sent per SNMP request. The default is `60`. Increasing this improves throughput but consumes more network and CPU resources per request. Tune this value based on your devices' capabilities and network bandwidth.
+  </Accordion>
+  <Accordion title="Thread pool size for Python auto-discovery">
+    In Python auto-discovery mode, discovered instances are checked in parallel using a thread pool. The pool size determines how many devices are polled concurrently. Too large a pool can exhaust file descriptors or network connections; too small a pool increases the total check runtime for large network ranges.
+  </Accordion>
+  <Accordion title="Cluster Agent for large deployments">
+    For environments with hundreds or thousands of SNMP devices, use Agent auto-discovery combined with the Cluster Agent. The DCA distributes check instances across all available Agents, making it possible to scale horizontally without manual partitioning of device IP ranges.
+  </Accordion>
+  <Accordion title="Discovery interval">
+    The `discovery_interval` (in seconds) in `snmp_listener` controls how often new devices are scanned. Lower values detect newly connected devices faster but increase background network traffic. For stable networks, a longer interval reduces unnecessary scanning overhead.
+  </Accordion>
+</AccordionGroup>

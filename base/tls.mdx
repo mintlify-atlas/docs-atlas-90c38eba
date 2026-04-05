@@ -1,0 +1,127 @@
+---
+title: "TLS/SSL"
+description: "Creating and configuring TLS/SSL contexts in Datadog integrations using AgentCheck.get_tls_context()."
+---
+
+Many services that Datadog monitors support or require TLS/SSL connections. The base package provides a standardized way to create TLS contexts from instance configuration, so your integration handles TLS consistently without manual `ssl` module usage.
+
+## Getting started
+
+For Agent 7.24+, integrations that need a raw TLS context should use `AgentCheck.get_tls_context()` instead of constructing an `ssl.SSLContext` directly. The method reads TLS configuration from the instance config, creates an `SSLContext`, and caches it.
+
+```python
+class MyDatabaseCheck(AgentCheck):
+    def check(self, instance):
+        tls_context = self.get_tls_context()
+        # Pass tls_context to your database or network library
+        connection = connect(
+            host=instance['host'],
+            ssl_context=tls_context,
+        )
+```
+
+<Warning>
+For Agent versions before 7.24, you must create a TLS context manually using the `ssl` standard library. Use `get_tls_context()` for all new integrations targeting Agent 7.24+.
+</Warning>
+
+## Method signature
+
+```python
+def get_tls_context(self, refresh=False, overrides=None):
+    ...
+```
+
+<ParamField path="refresh" type="bool" default="False">
+  When `True`, forces the TLS context to be re-created from the current configuration, even if a cached context already exists. Use this if you need to pick up rotated certificates.
+</ParamField>
+<ParamField path="overrides" type="dict">
+  A mapping of configuration keys to values that override what is read from `instance`. Apply this to older integrations that set TLS values programmatically rather than reading them from user configuration.
+</ParamField>
+
+## Instance configuration options
+
+The following options are read from the `instance` configuration section automatically when you call `get_tls_context()`:
+
+<ParamField path="tls_verify" type="bool" default="True">
+  Whether to verify the server's TLS certificate against the CA bundle. Set to `false` only for development or with a known self-signed certificate.
+</ParamField>
+<ParamField path="tls_ca_cert" type="str">
+  Path to a CA bundle file (in PEM format) or a directory containing CA certificates. Used to verify the server's certificate chain when `tls_verify` is `true`.
+</ParamField>
+<ParamField path="tls_cert" type="str">
+  Path to a client certificate file (in PEM format) for mutual TLS authentication.
+</ParamField>
+<ParamField path="tls_private_key" type="str">
+  Path to the private key file for the client certificate. Required if `tls_cert` is set and the key is in a separate file.
+</ParamField>
+<ParamField path="tls_private_key_password" type="str">
+  Passphrase for the private key file, if it is encrypted.
+</ParamField>
+
+## Legacy config remapping
+
+If your integration uses non-standard configuration key names for TLS settings, define `TLS_CONFIG_REMAPPER` on your class to map them to the canonical names:
+
+```python
+class MyLegacyCheck(AgentCheck):
+    TLS_CONFIG_REMAPPER = {
+        'ssl_ca_bundle': {
+            'name': 'tls_ca_cert',
+        },
+        'ssl_client_cert': {
+            'name': 'tls_cert',
+        },
+        'no_verify_ssl': {
+            'name': 'tls_verify',
+            'invert': True,
+            'default': False,
+        },
+    }
+```
+
+Each entry maps a legacy key to:
+
+<ParamField path="name" type="str" required>
+  The canonical TLS configuration key to map to.
+</ParamField>
+<ParamField path="default" type="any">
+  The default value to use if the legacy key is absent.
+</ParamField>
+<ParamField path="invert" type="bool" default="False">
+  When `True`, the boolean value is inverted before use. Useful for `disable_*` or `no_*` style keys.
+</ParamField>
+
+## Example: mutual TLS
+
+```yaml
+instances:
+  - host: my-secure-service.internal
+    tls_verify: true
+    tls_ca_cert: /etc/ssl/certs/my-ca-bundle.pem
+    tls_cert: /etc/datadog-agent/certs/client.pem
+    tls_private_key: /etc/datadog-agent/certs/client.key
+```
+
+```python
+class SecureServiceCheck(AgentCheck):
+    def check(self, instance):
+        tls_context = self.get_tls_context()
+
+        conn = my_library.connect(
+            host=instance['host'],
+            ssl_context=tls_context,
+        )
+        # ... collect metrics
+```
+
+## Refreshing the context
+
+If certificates rotate at runtime, call `get_tls_context(refresh=True)` to discard the cached context and create a new one from the current configuration:
+
+```python
+def check(self, instance):
+    if self._cert_rotated():
+        tls_context = self.get_tls_context(refresh=True)
+    else:
+        tls_context = self.get_tls_context()
+```

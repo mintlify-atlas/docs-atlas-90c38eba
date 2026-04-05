@@ -1,0 +1,142 @@
+---
+title: "Testing"
+description: "Run unit and integration tests with ddev test — discover environments, select specific versions, measure coverage, run linting, and forward arguments to pytest."
+---
+
+The entrypoint for testing any integration is the `ddev test` command. Under the hood, it uses [hatch](https://hatch.pypa.io) for environment management and [pytest](https://github.com/pytest-dev/pytest) as the test framework.
+
+## Discover available environments
+
+Before running tests, use the `--list` / `-l` flag to see what environments are available for an integration:
+
+```bash
+ddev test postgres -l
+```
+
+```text
+                                  Standalone
+┏━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
+┃ Name   ┃ Type    ┃ Features ┃ Dependencies    ┃ Environment variables   ┃ Scripts   ┃
+┡━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━┩
+│ lint   │ virtual │          │ black==22.12.0  │                         │ all       │
+│        │         │          │ pydantic==2.7.3 │                         │ fmt       │
+│        │         │          │ ruff==0.0.257   │                         │ style     │
+├────────┼─────────┼──────────┼─────────────────┼─────────────────────────┼───────────┤
+│ latest │ virtual │ deps     │                 │ POSTGRES_VERSION=latest │ benchmark │
+│        │         │          │                 │                         │ test      │
+│        │         │          │                 │                         │ test-cov  │
+└────────┴─────────┴──────────┴─────────────────┴─────────────────────────┴───────────┘
+                        Matrices
+┏━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┓
+┃ Name    ┃ Type    ┃ Envs       ┃ Features ┃ Scripts   ┃
+┡━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━┩
+│ default │ virtual │ py3.9-9.6  │ deps     │ benchmark │
+│         │         │ py3.9-10.0 │          │ test      │
+│         │         │ py3.9-11.0 │          │ test-cov  │
+│         │         │ py3.9-12.1 │          │           │
+│         │         │ py3.9-13.0 │          │           │
+│         │         │ py3.9-14.0 │          │           │
+└─────────┴─────────┴────────────┴──────────┴───────────┘
+```
+
+Environment names follow a `pyX.Y-<product-version>` pattern. The Python version prefix (`py3.9`) indicates which Python version to use — environments for Python versions you haven't installed are skipped automatically. The suffix (`9.6`, `13.0`, etc.) is the version of the product under test (PostgreSQL in this example).
+
+If there's no version suffix, either the version is pinned to the latest release or there's no concept of a product version (for example, the `disk` check).
+
+## Run tests
+
+### Run all environments
+
+Pass just the integration name to run every test environment:
+
+```bash
+ddev test postgres
+```
+
+### Select specific environments
+
+Append `:` followed by a comma-separated list of environment names to run only those environments:
+
+```bash
+ddev test postgres:py3.9-13.0,py3.9-11.0
+```
+
+This runs `py3.9-13.0` first, then `py3.9-11.0`.
+
+### Auto-detection mode
+
+If you don't specify any integration, `ddev test` tests only the integrations that changed — based on a diff between the latest commit on your current branch and `master`:
+
+```bash
+ddev test
+```
+
+The diff uses file extensions to determine what counts as a change. If only Markdown files changed, nothing is tested. Changed integrations are tested in lexicographical order.
+
+## Measure coverage
+
+Use the `--cov` / `-c` flag to display a coverage summary after tests pass:
+
+```bash
+ddev test tls -c
+```
+
+```text
+─────────────────────────────── Coverage report ────────────────────────────────
+
+Name                              Stmts   Miss Branch BrPart  Cover   Missing
+-----------------------------------------------------------------------------
+datadog_checks\tls\__about__.py       1      0      0      0   100%
+datadog_checks\tls\__init__.py        3      0      0      0   100%
+datadog_checks\tls\tls.py           185      4     50      2    97%   160-167, 288->275, 297->300, 300
+datadog_checks\tls\utils.py          43      0     16      0   100%
+tests\__init__.py                     0      0      0      0   100%
+tests\conftest.py                   105      0      0      0   100%
+tests\test_config.py                 47      0      0      0   100%
+tests\test_local.py                 113      0      0      0   100%
+tests\test_remote.py                189      0      2      0   100%
+tests\test_utils.py                  15      0      0      0   100%
+tests\utils.py                       36      0      2      0   100%
+-----------------------------------------------------------------------------
+TOTAL                               737      4     70      2    99%
+```
+
+<Note>
+  Coverage is tracked for test code as well as integration code. A drop in test coverage for test code means a test function or part of it is no longer being called — a sign of a potential test bug.
+</Note>
+
+## Linting and formatting
+
+Run only lint checks with the `--lint` / `-s` flag:
+
+```bash
+ddev test postgres -s
+```
+
+Run the auto-formatter with the `--fmt` / `-fs` flag. The formatter resolves the most common errors caught by lint checks:
+
+```bash
+ddev test postgres -fs
+```
+
+<Tip>
+  Run the formatter before submitting a pull request to avoid lint failures in CI.
+</Tip>
+
+## Forward arguments to pytest
+
+Pass arbitrary [pytest arguments](https://docs.pytest.org/en/stable/reference/reference.html#command-line-flags) after `--`:
+
+```bash
+ddev test postgres -- -m unit --pdb -x
+```
+
+This is useful for filtering tests by marker, dropping into the debugger on failure, or stopping after the first failure.
+
+## Recreate environments
+
+Add `--recreate` to rebuild the hatch environment from scratch — useful when dependencies have changed and the cached environment is stale:
+
+```bash
+ddev test --recreate postgres
+```

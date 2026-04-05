@@ -1,0 +1,200 @@
+---
+title: "Style"
+description: "Python code style conventions including formatting tools, type hints, docstrings, comments, and code organization for integrations-core."
+---
+
+## Formatting tools
+
+The project uses `black` and `ruff` to enforce a consistent code style. Run the formatter on your integration before submitting a PR:
+
+```bash
+ddev test -fs <INTEGRATION>
+```
+
+For example, to format the `pgbouncer` integration:
+
+```bash
+ddev test -fs pgbouncer
+```
+
+### Import ordering
+
+Imports are sorted lexicographically, by section, and by type using `isort`. The five standard sections are:
+
+1. `__future__`
+2. Standard library
+3. Third party
+4. First party (`datadog_checks` is configured as a first party namespace)
+5. Local
+
+## Linting
+
+The project uses `flake8` with several plugins to catch bugs and style issues automatically.
+
+<AccordionGroup>
+  <Accordion title="bugbear rules">
+    The `flake8-bugbear` plugin catches likely bugs and design problems:
+
+    | Code | Rule |
+    | --- | --- |
+    | `B001` | Do not use bare `except:` — it catches memory errors, interrupts, and system exits. Use `except Exception:` instead. |
+    | `B003` | Assigning to `os.environ` does not clear the environment. Use `os.environ.clear()` or the `env=` argument to `Popen`. |
+    | `B006` | Do not use mutable data structures for argument defaults. All calls reuse the same instance, persisting changes between them. |
+    | `B007` | Loop control variable not used in the loop body. If intentional, start the name with an underscore. |
+    | `B301` | Python 3 does not include `.iter*` methods on dictionaries. Remove the `iter` prefix from the method. |
+    | `B305` | `.next()` does not exist in Python 3. Use the `next()` builtin. |
+    | `B306` | `BaseException.message` was removed in Python 3. Use `str(e)` for the user-readable message. |
+    | `B902` | Invalid first argument for method. Use `self` for instance methods and `cls` for class methods. |
+  </Accordion>
+  <Accordion title="logging-format rules">
+    The `flake8-logging-format` plugin enforces consistent logging calls:
+
+    | Code | Rule |
+    | --- | --- |
+    | `G001` | Do not use `string.format()` as the first argument to a logging statement. |
+    | `G002` | Do not use `%` formatting as the first argument to a logging statement. |
+    | `G003` | Do not use `+` concatenation as the first argument to a logging statement. |
+    | `G004` | Do not use f-strings as the first argument to a logging statement. |
+    | `G010` | Do not use `warn` — use `warning` instead. |
+    | `G100` | Do not use `extra` arguments unless whitelisted. |
+    | `G201` | Do not use `error(..., exc_info=True)` — use `exception(...)` instead. |
+    | `G202` | Do not use redundant `exc_info=True` inside `exception`. |
+  </Accordion>
+</AccordionGroup>
+
+## Type hints
+
+When writing new Python code, always add type hints to methods. Use modern syntax.
+
+<Tabs>
+  <Tab title="Preferred (modern)">
+    ```python
+    # Union types
+    def get_host(self) -> str | None:
+        ...
+
+    # Generic collections
+    def get_tags(self) -> list[str]:
+        ...
+
+    # Dictionary
+    def get_config(self) -> dict[str, str]:
+        ...
+    ```
+  </Tab>
+  <Tab title="Deprecated (avoid)">
+    ```python
+    from typing import List, Optional
+
+    # Do not use Optional
+    def get_host(self) -> Optional[str]:
+        ...
+
+    # Do not use List
+    def get_tags(self) -> List[str]:
+        ...
+    ```
+  </Tab>
+</Tabs>
+
+### Generators and iterators
+
+If a method yields values but neither accepts sent values nor returns a final value, type it as `Iterator` to clearly expose that the caller can only iterate over it:
+
+```python
+from typing import Iterator
+
+def collect_metrics(self, conn: Connection) -> Iterator[Metric]:
+    """Collect metrics from the connected cluster."""
+    for query in self.queries:
+        for metric in query.run(conn=conn):
+            yield metric
+```
+
+### The `AnyStr` pattern
+
+`AnyStr` is used to type a variable that can be either `str` or `bytes`, but it is being deprecated. Use the following replacements:
+
+<Tabs>
+  <Tab title="Preferred (type parameter list)">
+    ```python
+    # Use when multiple arguments must be the same type
+    def func[T: (str, bytes)](a: T, b: T) -> T:
+        ...
+    ```
+
+    This form ensures that `a` and `b` cannot be a mix of `str` and `bytes`.
+  </Tab>
+  <Tab title="Preferred (union, single argument)">
+    ```python
+    # Use when only one argument is present
+    def func(a: str | bytes) -> str | bytes:
+        ...
+    ```
+  </Tab>
+  <Tab title="Deprecated">
+    ```python
+    from typing import AnyStr
+
+    # Do not use AnyStr
+    def func(a: AnyStr, b: AnyStr) -> AnyStr:
+        ...
+    ```
+  </Tab>
+</Tabs>
+
+### Mypy (optional)
+
+`mypy` is available as an optional static type checker. To enable it for a specific integration, add the following to its `hatch.toml`:
+
+```toml
+[env.collectors.datadog-checks]
+check-types: true
+mypy-args = [
+    "--install-types",
+    "--non-interactive",
+]
+mypy-files = [
+    "datadog_checks/",
+    "tests/",
+]
+mypy-deps = [
+  "types-mock==0.1.5",
+]
+```
+
+Useful `mypy` flags:
+
+- `--check-untyped-defs` — Type-checks functions without type annotations.
+- `--disallow-untyped-defs` — Disallows defining functions without complete type annotations.
+
+<Note>
+When refactoring existing code, do not add type hints to methods that are not already type-hinted unless explicitly asked to do so.
+</Note>
+
+## Docstrings
+
+- Use concise one-liner docstrings for most methods.
+- Method names should be self-descriptive — a docstring that only restates the name adds no value.
+- Multi-line docstrings with `Args` and `Returns` sections are acceptable only for important public-interface methods that require detailed documentation.
+- Avoid verbose docstrings for internal or private methods.
+
+```python
+def collect_metrics(self, conn: Connection) -> Iterator[Metric]:
+    """Collect metrics from the RethinkDB cluster we are connected to."""
+    for query in self.queries:
+        for metric in query.run(conn=conn):
+            yield metric
+```
+
+## Comments
+
+- Avoid unnecessary inline comments. Write self-explanatory code instead.
+- If a comment is needed, keep it to one line.
+- Code clarity should come from descriptive names, not comments.
+
+## Code duplication
+
+- Extract helper functions to eliminate duplicated logic.
+- Small, focused functions with descriptive names are better than repeated code blocks.
+- Reusable helpers improve maintainability and reduce the need for comments.
